@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+    <meta charset="UTF-8">
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-HT02ZX6MDK"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-HT02ZX6MDK');
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INFILTRA - El Juego de Deducción Social</title>
+    <meta name="description" content="INFILTRA es un juego multijugador de deducción social. Descubre al impostor entre tus amigos antes de que sea demasiado tarde.">
+    <meta name="keywords" content="juego, multijugador, impostor, deducción, social, espía, detective">
+    <meta property="og:title" content="INFILTRA - El Juego de Deducción Social">
+    <meta property="og:description" content="Descubre al impostor entre tus amigos. Juego multijugador gratuito.">
+    <meta property="og:type" content="website">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="landing-page">
+    <!-- Efecto de partículas de fondo -->
+    <div class="particles-bg" id="particles"></div>
+    
+    <!-- Header/Navegación -->
+    <header class="main-header">
+        <nav class="nav-container">
+            <a href="#" class="logo">
+                <img src="assets/icons/icon-logo.png" alt="INFILTRA" class="logo-icon-img">
+                <span class="logo-text">INFILTRA</span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="#como-jugar">Cómo Jugar</a></li>
+                <li><a href="#caracteristicas">Características</a></li>
+                <li><a href="#faq">FAQ</a></li>
+                <li><a href="#contacto">Contacto</a></li>
+            </ul>
+            <a href="game.html" class="btn-nav-play">
+                <span class="play-icon">▶</span>
+                Jugar Ahora
+            </a>
+            <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menú">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </nav>
+    </header>
+
+    <!-- Mobile Menu -->
+    <div class="mobile-menu" id="mobileMenu">
+        <ul class="mobile-nav-links">
+            <li><a href="#como-jugar">Cómo Jugar</a></li>
+            <li><a href="#caracteristicas">Características</a></li>
+            <li><a href="#faq">FAQ</a></li>
+            <li><a href="#contacto">Contacto</a></li>
+            <li><a href="game.html" class="btn-mobile-play">
+                Jugar Ahora
+            </a></li>
+        </ul>
+    </div>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-badge animate-fade-in">JUEGO DE DEDUCCIÓN SOCIAL</div>
+            <h1 class="hero-title animate-fade-in-delay-1">
+                <span class="title-line">DESCUBRE AL</span>
+                <span class="title-accent">INFILTRADO</span>
+            </h1>
+            <p class="hero-subtitle animate-fade-in-delay-2">
+                Un juego de estrategia, engaño y deducción. Reúne a tus amigos y descubre quién 
+                está mintiendo antes de que sea demasiado tarde.
+            </p>
+            <div class="hero-actions animate-fade-in-delay-3">
+                <a href="game.html" class="btn-primary">
+                    <span class="play-icon">▶</span>
+                    Jugar Ahora
+                </a>
+                <a href="#como-jugar" class="btn-secondary">
+                    <span class="help-icon">?</span>
+                    Cómo Jugar
+                </a>
+            </div>
+            <div class="hero-stats animate-fade-in-delay-4">
+                <div class="stat">
+                    <span class="stat-number">3-10</span>
+                    <span class="stat-label">Jugadores</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat">
+                    <span class="stat-number">5+</span>
+                    <span class="stat-label">Minutos</span>
+                </div>
+                <div class="stat-divider"></div>
+                <div class="stat">
+                    <span class="stat-number">∞</span>
+                    <span class="stat-label">Diversión</span>
+                </div>
+            </div>
+        </div>
+        <div class="hero-visual" id="heroVisual">
+            <div class="visual-card card-citizen animate-float">
+                <div class="card-inner">
+                    <img src="assets/icons/icon-citizen.png" alt="Ciudadano" class="card-icon-img">
+                    <div class="card-label">CIUDADANO</div>
+                </div>
+            </div>
+            <div class="visual-card card-impostor animate-float-delay">
+                <div class="card-inner">
+                    <img src="assets/icons/icon-impostor.png" alt="Infiltrado" class="card-icon-img">
+                    <div class="card-label">INFILTRADO</div>
+                </div>
+            </div>
+            <div class="visual-card card-charlatan animate-float-delay-2">
+                <div class="card-inner">
+                    <img src="assets/icons/icon-charlatan.png" alt="Charlatán" class="card-icon-img">
+                    <div class="card-label">CHARLATÁN</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Cómo Jugar Section -->
+    <section class="section how-to-play" id="como-jugar">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">APRENDE</span>
+                <h2 class="section-title">Cómo Jugar</h2>
+                <p class="section-subtitle">Domina el arte de la deducción en 4 simples pasos</p>
+            </div>
+            
+            <div class="steps-grid">
+                <div class="step-card" data-step="01">
+                    <div class="step-number">01</div>
+                    <img src="assets/icons/icon-home.png" alt="" class="step-icon-img">
+                    <h3>Crea o Únete</h3>
+                    <p>Crea una sala nueva y comparte el código con tus amigos, o únete a una sala existente ingresando el código de 4 letras.</p>
+                </div>
+                
+                <div class="step-card" data-step="02">
+                    <div class="step-number">02</div>
+                    <img src="assets/icons/icon-impostor.png" alt="" class="step-icon-img">
+                    <h3>Recibe tu Rol</h3>
+                    <p>Se te asignará secretamente un rol: <strong>Ciudadano</strong> (conoces la palabra), <strong>Infiltrado</strong> (solo conoces la categoría), o <strong>Charlatán</strong> (tienes una palabra falsa).</p>
+                </div>
+                
+                <div class="step-card" data-step="03">
+                    <div class="step-number">03</div>
+                    <img src="assets/icons/icon-timer.png" alt="" class="step-icon-img">
+                    <h3>Da Pistas</h3>
+                    <p>Por turnos, da pistas sobre la palabra secreta. Los ciudadanos deben demostrar que la conocen sin revelarla. Los infiltrados deben fingir.</p>
+                </div>
+                
+                <div class="step-card" data-step="04">
+                    <div class="step-number">04</div>
+                    <img src="assets/icons/icon-voted.png" alt="" class="step-icon-img">
+                    <h3>Vota y Elimina</h3>
+                    <p>Discute con el grupo y vota por quien crees que es el infiltrado. El jugador con más votos es eliminado. ¡Descubre a todos los infiltrados para ganar!</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Roles Section -->
+    <section class="section roles-section">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">ROLES</span>
+                <h2 class="section-title">Conoce los Roles</h2>
+                <p class="section-subtitle">Cada rol tiene su propia estrategia para ganar</p>
+            </div>
+            
+            <div class="roles-grid">
+                <div class="role-card role-citizen">
+                    <div class="role-header">
+                        <img src="assets/icons/icon-citizen.png" alt="Ciudadano" class="role-icon-img">
+                        <h3>Ciudadano</h3>
+                    </div>
+                    <div class="role-info">
+                        <p class="role-description">Conoces la palabra secreta. Tu misión es identificar al infiltrado dando pistas sutiles sin revelar la palabra.</p>
+                        <div class="role-points">
+                            <h4>Sistema de Puntos</h4>
+                            <ul>
+                                <li><span class="points positive">+15</span> Sobrevivir la partida</li>
+                                <li><span class="points positive">+7</span> Votar correctamente al infiltrado</li>
+                                <li><span class="points negative">-3</span> Votar a otro ciudadano</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="role-card role-impostor">
+                    <div class="role-header">
+                        <img src="assets/icons/icon-impostor.png" alt="Infiltrado" class="role-icon-img">
+                        <h3>Infiltrado</h3>
+                    </div>
+                    <div class="role-info">
+                        <p class="role-description">Solo conoces la categoría. Debes fingir que conoces la palabra y evitar ser descubierto mientras desvías sospechas.</p>
+                        <div class="role-points">
+                            <h4>Sistema de Puntos</h4>
+                            <ul>
+                                <li><span class="points positive">+30</span> Ganar la partida</li>
+                                <li><span class="points positive">+5</span> Por cada ronda que sobrevivas</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="role-card role-charlatan">
+                    <div class="role-header">
+                        <img src="assets/icons/icon-charlatan.png" alt="Charlatán" class="role-icon-img">
+                        <h3>Charlatán</h3>
+                    </div>
+                    <div class="role-info">
+                        <p class="role-description">Tienes una palabra falsa de la misma categoría. Creerás ser ciudadano, pero tus pistas podrían delatarte.</p>
+                        <div class="role-points">
+                            <h4>Sistema de Puntos</h4>
+                            <ul>
+                                <li><span class="points positive">+25</span> Sobrevivir la partida</li>
+                                <li><span class="points positive">+7</span> Votar correctamente al infiltrado</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Características Section -->
+    <section class="section features-section" id="caracteristicas">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">CARACTERÍSTICAS</span>
+                <h2 class="section-title">¿Por qué INFILTRA?</h2>
+                <p class="section-subtitle">Diseñado para máxima diversión con amigos</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <img src="assets/icons/icon-join.png" alt="" class="feature-icon-img">
+                    <h3>Multijugador Local</h3>
+                    <p>Juega con amigos en la misma habitación. Cada uno usa su propio dispositivo.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <img src="assets/icons/icon-play.png" alt="" class="feature-icon-img">
+                    <h3>Sin Descargas</h3>
+                    <p>Juega directamente desde el navegador. No necesitas instalar nada.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <img src="assets/icons/icon-timer.png" alt="" class="feature-icon-img">
+                    <h3>Partidas Rápidas</h3>
+                    <p>Configura el tiempo de rondas según tu preferencia.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <img src="assets/icons/icon-settings.png" alt="" class="feature-icon-img">
+                    <h3>Personalización</h3>
+                    <p>Elige tu avatar y personaliza tu perfil. Más opciones próximamente.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <img src="assets/icons/icon-medal-gold.png" alt="" class="feature-icon-img">
+                    <h3>Sistema de Puntos</h3>
+                    <p>Compite con tus amigos en cada sesión. El sistema de puntos recompensa la astucia.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <img src="assets/icons/icon-sound-on.png" alt="" class="feature-icon-img">
+                    <h3>Sonido inmersivo</h3>
+                    <p>Para cada momento del juego. Siléncialos cuando quieras.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section class="section faq-section" id="faq">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">AYUDA</span>
+                <h2 class="section-title">Preguntas Frecuentes</h2>
+            </div>
+            
+            <div class="faq-grid">
+                <div class="faq-item">
+                    <button class="faq-question">
+                        <span>¿Cuántos jugadores se necesitan?</span>
+                        <span class="faq-icon">+</span>
+                    </button>
+                    <div class="faq-answer">
+                        <p>El juego funciona con 3 a 10 jugadores. Recomendamos al menos 5 jugadores para una experiencia óptima. Con más jugadores, puedes agregar más infiltrados y charlatanes.</p>
+                    </div>
+                </div>
+                
+                <div class="faq-item">
+                    <button class="faq-question">
+                        <span>¿Es gratis?</span>
+                        <span class="faq-icon">+</span>
+                    </button>
+                    <div class="faq-answer">
+                        <p>Sí, INFILTRA es completamente gratuito. En el futuro agregaremos opciones de personalización premium, pero el juego base siempre será gratis.</p>
+                    </div>
+                </div>
+                
+                <div class="faq-item">
+                    <button class="faq-question">
+                        <span>¿Necesito crear una cuenta?</span>
+                        <span class="faq-icon">+</span>
+                    </button>
+                    <div class="faq-answer">
+                        <p>No, no necesitas cuenta. Solo ingresa tu nombre y comienza a jugar. Tu perfil se guarda localmente en tu dispositivo.</p>
+                    </div>
+                </div>
+                
+                <div class="faq-item">
+                    <button class="faq-question">
+                        <span>¿Qué pasa si me desconecto?</span>
+                        <span class="faq-icon">+</span>
+                    </button>
+                    <div class="faq-answer">
+                        <p>Si te desconectas durante una partida, serás eliminado automáticamente del juego actual. Puedes volver a unirte a la sala cuando inicie una nueva partida.</p>
+                    </div>
+                </div>
+                
+                <div class="faq-item">
+                    <button class="faq-question">
+                        <span>¿Puedo jugar en cualquier dispositivo?</span>
+                        <span class="faq-icon">+</span>
+                    </button>
+                    <div class="faq-answer">
+                        <p>Sí, INFILTRA funciona en cualquier dispositivo con navegador web moderno: smartphones, tablets, laptops y computadoras de escritorio.</p>
+                    </div>
+                </div>
+                
+                <div class="faq-item">
+                    <button class="faq-question">
+                        <span>¿Cómo reporto un bug?</span>
+                        <span class="faq-icon">+</span>
+                    </button>
+                    <div class="faq-answer">
+                        <p>Puedes reportar bugs o sugerir mejoras a través de la sección de contacto más abajo, o directamente en nuestro repositorio de GitHub.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="section cta-section">
+        <div class="section-container">
+            <div class="cta-content">
+                <h2>¿Listo para Descubrir al Infiltrado?</h2>
+                <p>Reúne a tus amigos y comienza a jugar ahora mismo. Sin descargas.</p>
+                <a href="game.html" class="btn-primary btn-large">
+                    <span class="play-icon">▶</span>
+                    Comenzar a Jugar
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contacto Section -->
+    <section class="section contact-section" id="contacto">
+        <div class="section-container">
+            <div class="section-header">
+                <span class="section-tag">CONTACTO</span>
+                <h2 class="section-title">¿Tienes Preguntas?</h2>
+                <p class="section-subtitle">Estamos aquí para ayudarte</p>
+            </div>
+            
+            <div class="contact-content">
+                <div class="contact-info">
+                    <div class="contact-item">
+                        <img src="assets/icons/icon-email.png" alt="" class="contact-icon-img">
+                        <div>
+                            <h4>Email</h4>
+                            <p>soporte@infiltra.game</p>
+                        </div>
+                    </div>
+                    <div class="contact-item">
+                        <img src="assets/icons/icon-social.png" alt="" class="contact-icon-img">
+                        <div>
+                            <h4>Redes Sociales</h4>
+                            <p>@InfiltraGame</p>
+                        </div>
+                    </div>
+                    <div class="contact-item">
+                        <img src="assets/icons/icon-github.png" alt="" class="contact-icon-img">
+                        <div>
+                            <h4>GitHub</h4>
+                            <p>github.com/infiltra-game</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="footer-container">
+            <div class="footer-brand">
+                <a href="#" class="logo">
+                    <img src="assets/icons/icon-logo.png" alt="INFILTRA" class="logo-icon-img">
+                    <span class="logo-text">INFILTRA</span>
+                </a>
+                <p>El juego de deducción social definitivo.</p>
+            </div>
+            
+            <div class="footer-links">
+                <div class="footer-column">
+                    <h4>Juego</h4>
+                    <ul>
+                        <li><a href="game.html">Jugar</a></li>
+                        <li><a href="#como-jugar">Cómo Jugar</a></li>
+                        <li><a href="#faq">FAQ</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h4>Legal</h4>
+                    <ul>
+                        <li><a href="#terminos">Términos de Uso</a></li>
+                        <li><a href="#privacidad">Privacidad</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h4>Contacto</h4>
+                    <ul>
+                        <li><a href="#contacto">Soporte</a></li>
+                        <li><a href="#">GitHub</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer-bottom">
+            <p>&copy; 2026 INFILTRA. Todos los derechos reservados.</p>
+            <p class="version-tag">beta v0.9.8.6</p>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script>
+        // Mobile Menu Toggle
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const mobileMenu = document.getElementById('mobileMenu');
+        
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenuBtn.classList.toggle('active');
+            mobileMenu.classList.toggle('active');
+            document.body.classList.toggle('menu-open');
+        });
+
+        // Close mobile menu when clicking a link
+        document.querySelectorAll('.mobile-nav-links a').forEach(link => {
+            link.addEventListener('click', () => {
+                mobileMenuBtn.classList.remove('active');
+                mobileMenu.classList.remove('active');
+                document.body.classList.remove('menu-open');
+            });
+        });
+
+        // FAQ Accordion
+        document.querySelectorAll('.faq-question').forEach(button => {
+            button.addEventListener('click', () => {
+                const faqItem = button.parentElement;
+                const isActive = faqItem.classList.contains('active');
+                
+                // Close all other FAQs
+                document.querySelectorAll('.faq-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                
+                // Toggle current FAQ
+                if (!isActive) {
+                    faqItem.classList.add('active');
+                }
+            });
+        });
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Header scroll effect
+        const header = document.querySelector('.main-header');
+        let lastScroll = 0;
+        
+        window.addEventListener('scroll', () => {
+            const currentScroll = window.pageYOffset;
+            
+            if (currentScroll > 50) {
+                header.classList.add('scrolled');
+            } else {
+                header.classList.remove('scrolled');
+            }
+            
+            lastScroll = currentScroll;
+        });
+
+        // Intersection Observer for animations
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('animate-visible');
+                }
+            });
+        }, observerOptions);
+
+        // Observe elements for scroll animations
+        document.querySelectorAll('.step-card, .role-card, .feature-card, .faq-item').forEach(el => {
+            observer.observe(el);
+        });
+
+        // Particles background effect
+        function createParticles() {
+            const container = document.getElementById('particles');
+            const particleCount = 50;
+            
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.style.left = Math.random() * 100 + '%';
+                particle.style.top = Math.random() * 100 + '%';
+                particle.style.animationDelay = Math.random() * 5 + 's';
+                particle.style.animationDuration = (Math.random() * 3 + 2) + 's';
+                container.appendChild(particle);
+            }
+        }
+        
+        createParticles();
+    </script>
+</body>
+</html>

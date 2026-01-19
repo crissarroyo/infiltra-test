@@ -1,0 +1,46 @@
+{
+    "frames": [
+        {
+            "id": "frame-basic",
+            "name": "Básico",
+            "file": "frame-basic.svg",
+            "color": "#4a5568",
+            "unlocked": true,
+            "price": 0,
+            "description": "Marco estándar para todos los agentes"
+        },
+        {
+            "id": "frame-gold",
+            "name": "Dorado",
+            "file": "frame-gold.svg",
+            "color": "#c9a227",
+            "unlocked": false,
+            "price": 100,
+            "description": "Para agentes distinguidos"
+        },
+        {
+            "id": "frame-premium",
+            "name": "Élite",
+            "file": "frame-premium.svg",
+            "color": "#8b2635",
+            "unlocked": false,
+            "price": 250,
+            "description": "Reservado para agentes de élite"
+        },
+        {
+            "id": "frame-diamond",
+            "name": "Diamante",
+            "file": "frame-diamond.svg",
+            "color": "#00d4ff",
+            "unlocked": false,
+            "price": 500,
+            "description": "El marco más exclusivo"
+        }
+    ],
+    "specifications": {
+        "format": "SVG preferred",
+        "size": "220x220 pixels (to wrap 200px avatar)",
+        "center": "Circular hole of 200px diameter",
+        "background": "transparent"
+    }
+}

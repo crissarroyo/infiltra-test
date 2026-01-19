@@ -1,0 +1,81 @@
+{
+    "avatars": [
+        {
+            "id": "avatar-1",
+            "name": "Detective Clásico",
+            "gender": "male",
+            "file": "avatar-1.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-2",
+            "name": "Agente Secreta",
+            "gender": "female",
+            "file": "avatar-2.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-3",
+            "name": "Investigador",
+            "gender": "male",
+            "file": "avatar-3.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-4",
+            "name": "Espía Elegante",
+            "gender": "female",
+            "file": "avatar-4.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-5",
+            "name": "Detective Noir",
+            "gender": "male",
+            "file": "avatar-5.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-6",
+            "name": "Agente Encubierta",
+            "gender": "female",
+            "file": "avatar-6.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-7",
+            "name": "Sabueso",
+            "gender": "male",
+            "file": "avatar-7.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-8",
+            "name": "Infiltrada",
+            "gender": "female",
+            "file": "avatar-8.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-9",
+            "name": "Agente Sombra",
+            "gender": "male",
+            "file": "avatar-9.svg",
+            "unlocked": true
+        },
+        {
+            "id": "avatar-10",
+            "name": "La Maestra",
+            "gender": "female",
+            "file": "avatar-10.svg",
+            "unlocked": true
+        }
+    ],
+    "specifications": {
+        "format": "SVG preferred, PNG accepted",
+        "size": "200x200 pixels",
+        "background": "transparent",
+        "style": "Minimalist detective/spy characters",
+        "diversity": "Various ethnicities represented"
+    }
+}
