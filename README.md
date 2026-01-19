@@ -4,7 +4,7 @@
 
 INFILTRA es un juego multijugador de deducción social donde los jugadores deben identificar al infiltrado entre ellos antes de que sea demasiado tarde.
 
-🎮 **[Jugar Ahora](https://crissarroyo.github.io/infiltra)**
+🎮 **[Jugar Ahora](https://crissarroyo.github.io/infiltra-test)**
 
 ---
 
