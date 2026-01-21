@@ -486,7 +486,7 @@ p {
     margin-top: var(--space-lg);
 }
 
-/* FIX: Mejor estilo para "o únete" */
+/* FIX: "o únete" */
 .divider {
     display: flex;
     align-items: center;
@@ -715,6 +715,22 @@ p {
     font-weight: bold;
     box-shadow: var(--shadow-sm);
     z-index: 2;
+}
+
+.avatar-img-container {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    overflow: hidden;
+}
+.avatar-img-container img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
 }
 
 /* ----------------------------------------
@@ -946,6 +962,7 @@ p {
     color: var(--color-accent-gold);
     font-weight: 600;
 }
+.starter-info { display: none !important; }
 
 /* FIX: Banner persistente de quien inicia */
 .starter-banner {
@@ -1031,6 +1048,19 @@ p {
         transform: scale(1);
     }
 }
+
+.round-start-avatar {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    margin: 0 auto var(--space-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg-secondary);
+    overflow: hidden;
+}
+.round-start-avatar img { width: 90%; height: 90%; object-fit: contain; }
 
 /* ----------------------------------------
    Role Display
@@ -1783,6 +1813,15 @@ p {
         width: 80px;
         height: 80px;
     }
+    .players-sidebar {
+        top: auto;
+        bottom: var(--space-md);
+        left: var(--space-sm);
+        right: var(--space-sm);
+        width: auto;
+        max-height: 150px;
+    }
+    .players-sidebar-list { flex-direction: row; flex-wrap: wrap; }
 }
 
 @media (max-width: 480px) {
