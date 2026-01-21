@@ -188,7 +188,7 @@ function initAvatars() {
     AVATARS.forEach(avatar => {
         const div = document.createElement('div');
         div.className = 'avatar-option' + (avatar.id === G.avatar ? ' selected' : '');
-        div.innerHTML = '<img src="' + avatar.image + '" alt="' + avatar.id + '"><div class="avatar-check">✓</div>';
+        div.innerHTML = '<div class="avatar-img-container"><img src="' + avatar.image + '" alt="' + avatar.id + '"></div><div class="avatar-check">✓</div>';
         div.onclick = function() {
             G.avatar = avatar.id;
             grid.querySelectorAll('.avatar-option').forEach(el => el.classList.remove('selected'));
@@ -267,25 +267,38 @@ function createPlayersSidebar() {
 
 function updatePlayersSidebar() {
     const list = document.getElementById('sidebar-players-list');
-    const sidebar = document.getElementById('players-sidebar');
-    if (!list || !sidebar) return;
+    if (!list) return;
     
-    const allPlayerIds = Object.keys(G.players);
-    list.innerHTML = allPlayerIds.map(id => {
+    let html = '';
+    
+    // Activos primero (con icono active)
+    G.activePlayers.forEach(id => {
         const p = G.players[id];
-        const isEliminated = G.eliminated.includes(id);
-        const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
-        const frame = FRAMES.find(f => f.id === p?.frame);
-        const frameStyle = frame ? 'border:2px solid ' + frame.color + ';' : '';
-        return '<div class="sidebar-player' + (isEliminated ? ' eliminated' : '') + '">' +
-            '<div class="sidebar-player-avatar"><img src="' + avatar.image + '" style="' + frameStyle + 'border-radius:50%;width:100%;height:100%;"></div>' +
-            '<span class="sidebar-player-name">' + (p?.name || id.substring(0, 8)) + '</span></div>';
-    }).join('');
+        const avatar = renderPlayerAvatar(id, 32);
+        html += '<div class="sidebar-player">' +
+            '<div class="sidebar-player-avatar">' + avatar + '</div>' +
+            '<span class="sidebar-player-name">' + (p?.name || id.substring(0,8)) + '</span>' +
+            '<img src="' + ICONS.active + '" alt="" class="player-status-icon">' +
+            '</div>';
+    });
+    
+    // Eliminados (opacidad + icono)
+    G.eliminated.forEach(id => {
+        const p = G.players[id];
+        const avatar = renderPlayerAvatar(id, 32);
+        html += '<div class="sidebar-player eliminated">' +
+            '<div class="sidebar-player-avatar">' + avatar + '</div>' +
+            '<span class="sidebar-player-name">' + (p?.name || id.substring(0,8)) + '</span>' +
+            '<img src="' + ICONS.eliminated + '" alt="" class="player-status-icon">' +
+            '</div>';
+    });
+    
+    list.innerHTML = html;
 }
 
 function showPlayersSidebar() {
     const sidebar = document.getElementById('players-sidebar');
-    if (sidebar && window.innerWidth > 768) {
+    if (sidebar) {
         updatePlayersSidebar();
         sidebar.classList.add('visible');
     }
@@ -1073,6 +1086,7 @@ function startTimer(duration) {
         remaining--;
         if (remaining < 0) { clearInterval(G.timerInterval); return; }
         updateTimerDisplay(remaining);
+        updatePlayersSidebar();
         if (remaining <= 10) timer.classList.add('warning');
         if (remaining <= 0) {
             clearInterval(G.timerInterval);
@@ -1156,6 +1170,7 @@ function startVoteTimer(seconds) {
         remaining--;
         if (remaining < 0) { clearInterval(G.voteTimerInterval); return; }
         display.textContent = '00:' + remaining.toString().padStart(2, '0');
+        updatePlayersSidebar();
     }, 1000);
 }
 
@@ -1189,6 +1204,7 @@ function handleVote(voterId, targetId) {
         }
     }
     if (G.isSpectator) updateSpectatorVotes();
+    if (!G.isSpectator) updatePlayersSidebar();
 }
 
 function publishResults() {
@@ -1249,7 +1265,6 @@ function publishResults() {
         channel: G.channel,
         message: { type: 'spectator_roles', roles: G.fullRoles, activePlayers: G.activePlayers }
     });
-    setTimeout(checkGameOver, RESULT_DISPLAY_TIME);
 }
 
 function showYouEliminatedOverlay(role) {
@@ -1350,7 +1365,32 @@ function showResults(msg) {
     document.getElementById('btn-back-lobby').style.display = 'none';
     if (G.isHost) {
         setTimeout(function() {
-            if (btnNext) btnNext.style.display = 'block';
+            let winner = null;
+            let reason = '';
+            if (G.impostors.length === 0) {
+                winner = 'CIUDADANOS';
+                reason = 'Infiltrados eliminados';
+                G.citizens.forEach(id => {
+                    if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CITIZEN_SURVIVE;
+                });
+                G.charlatans.forEach(id => {
+                    if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CHARLATAN_SURVIVE;
+                });
+            } else if (G.activePlayers.length - G.impostors.length <= G.impostors.length) {
+                winner = 'INFILTRADOS';
+                reason = 'Infiltrados dominan';
+                G.impostors.forEach(id => {
+                    G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_WIN;
+                });
+            }
+            if (winner) {
+                G.pubnub.publish({
+                    channel: G.channel,
+                    message: { type: 'game_over', winner: winner, reason: reason, scores: G.scores, roles: G.fullRoles }
+                });
+            } else {
+                if (btnNext) btnNext.style.display = 'block';
+            }
         }, RESULT_DISPLAY_TIME);
     }
 }
@@ -1424,34 +1464,6 @@ function handleNextRound(msg) {
     if (btnSkip) btnSkip.style.display = G.isHost ? 'block' : 'none';
     showScreen('screen-role');
     updatePlayersSidebar();
-}
-
-function checkGameOver() {
-    if (!G.isHost || !G.pubnub) return;
-    let winner = null;
-    let reason = '';
-    if (G.impostors.length === 0) {
-        winner = 'CIUDADANOS';
-        reason = 'Infiltrados eliminados';
-        G.citizens.forEach(id => {
-            if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CITIZEN_SURVIVE;
-        });
-        G.charlatans.forEach(id => {
-            if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CHARLATAN_SURVIVE;
-        });
-    } else if (G.activePlayers.length - G.impostors.length <= G.impostors.length) {
-        winner = 'INFILTRADOS';
-        reason = 'Infiltrados dominan';
-        G.impostors.forEach(id => {
-            G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_WIN;
-        });
-    }
-    if (winner) {
-        G.pubnub.publish({
-            channel: G.channel,
-            message: { type: 'game_over', winner: winner, reason: reason, scores: G.scores, roles: G.fullRoles }
-        });
-    }
 }
 
 function handleGameOver(msg) {
