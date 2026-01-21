@@ -48,7 +48,7 @@ const POINTS = {
 };
 
 const DB = {
-    "Animales": ["León", "Tigre", "Elefante", "Cebra", "Delfín", "Lobo", "Gorila", "Águila", "Jirafa", "Oso", "Zorro", "Panda", "Tiburón", "Canguro", "Hipopótamo", "Serpiente", "Cocodrilo", "Pájaro", "Mono", "Tortuga"],
+    "Animales": ["León", "Tigre", "Elefante", "Zebra", "Delfín", "Lobo", "Gorila", "Águila", "Jirafa", "Oso", "Zorro", "Panda", "Tiburón", "Canguro", "Hipopótamo", "Serpiente", "Cocodrilo", "Pájaro", "Mono", "Tortuga"],
     "Comida": ["Pizza", "Tacos", "Sushi", "Hamburguesa", "Pasta", "Ensalada", "Helado", "Pollo", "Pescado", "Chocolate", "Empanadas", "Ramen", "Curry", "Paella", "Burrito", "Croissant", "Queso", "Arroz", "Sopa", "Tarta"],
     "Países": ["México", "Japón", "Brasil", "España", "Francia", "Italia", "Alemania", "Australia", "Argentina", "Canadá", "China", "India", "Rusia", "Estados Unidos", "Reino Unido", "Sudáfrica", "Egipto", "Nueva Zelanda", "Corea del Sur", "Turquía"],
     "Profesiones": ["Médico", "Abogado", "Ingeniero", "Profesor", "Chef", "Piloto", "Arquitecto", "Programador", "Fotógrafo", "Enfermero", "Diseñador", "Periodista", "Músico", "Actor", "Científico", "Veterinario", "Contador", "Psicólogo", "Bombero", "Policía"],
@@ -100,6 +100,7 @@ let G = {
     citizens: [],
     myRole: null,
     fullRoles: {},
+    trueRoles: {},
     scores: {},
     usedWords: [],
     currentCategory: null,
@@ -120,7 +121,8 @@ let G = {
     screenStack: [],
     roleRevealed: false,
     isFirstRound: true,
-    roundStarting: false
+    roundStarting: false,
+    roundInProgress: false
 };
 
 document.addEventListener('DOMContentLoaded', init);
@@ -450,9 +452,9 @@ function onStatus(status) {
         setPlayerState();
         document.getElementById('display-room-code').textContent = G.channel;
         showScreen('screen-lobby');
+        generateQR();
         if (G.isHost) {
             document.getElementById('btn-distribute').style.display = 'block';
-            generateQR();
             setTimeout(publishConfig, 300);
         } else {
             setTimeout(requestSync, 500);
@@ -478,6 +480,13 @@ function onMessage(event) {
             renderPlayerList();
             break;
         case 'player_state':
+            const currentCount = Object.keys(G.players).length;
+            if (!G.players[sender] && currentCount >= G.maxPlayers && sender !== G.myId) {
+                if (G.isHost) {
+                    G.pubnub.publish({ channel: G.channel, message: { type: 'room_full', targetId: sender } });
+                }
+                return;
+            }
             G.players[sender] = { name: msg.name, avatar: msg.avatar, frame: msg.frame };
             if (G.scores[sender] === undefined) G.scores[sender] = 0;
             renderPlayerList();
@@ -644,7 +653,7 @@ function generateQR() {
     qr.addData('https://crissarroyo.github.io/infiltra/game.html?code=' + G.channel);
     qr.make();
     container.innerHTML = qr.createImgTag(4) + 
-        '<div class="qr-instructions"><strong>Escanea para unirte</strong>O comparte el código de arriba con tus amigos</div>';
+        '<div class="qr-instructions"><strong>Comparte el código de arriba</strong>para que tus amigos se unan</div>';
 }
 
 function refreshPlayers() {
@@ -789,16 +798,19 @@ function distributeRoles() {
         const idx = Math.floor(Math.random() * pool.length);
         const id = pool.splice(idx, 1)[0];
         roles[id] = { role: 'INFILTRADO', icon: ICONS.impostor, word: 'Categoría: ' + wordData.category };
+        G.trueRoles[id] = 'INFILTRADO';
         G.impostors.push(id);
     }
     for (let i = 0; i < numChar && pool.length; i++) {
         const idx = Math.floor(Math.random() * pool.length);
         const id = pool.splice(idx, 1)[0];
-        roles[id] = { role: 'CHARLATÁN', icon: ICONS.charlatan, word: wordData.fakeWord };
+        roles[id] = { role: 'CIUDADANO', icon: ICONS.citizen, word: wordData.secretWord };
+        G.trueRoles[id] = 'CHARLATÁN';
         G.charlatans.push(id);
     }
     pool.forEach(id => {
         roles[id] = { role: 'CIUDADANO', icon: ICONS.citizen, word: wordData.secretWord };
+        G.trueRoles[id] = 'CIUDADANO';
         G.citizens.push(id);
     });
     G.activePlayers = [...playerIds];
@@ -895,6 +907,7 @@ function handleAssign(msg) {
     const starterInfo = document.getElementById('starter-info');
     const btnStart = document.getElementById('btn-start-round');
     const btnSkip = document.getElementById('btn-skip-word');
+    if (starterInfo) starterInfo.style.display = 'none';
     if (G.isFirstRound) {
         if (card) card.className = 'role-card blurred';
         roleIcon.innerHTML = '<img src="' + ICONS.help + '" alt="?" class="role-icon-img">';
@@ -920,10 +933,6 @@ function handleAssign(msg) {
         btnStart.textContent = 'Iniciar Ronda';
     }
     if (btnSkip) btnSkip.style.display = G.isHost ? 'block' : 'none';
-    if (starterInfo) {
-        starterInfo.textContent = 'Inicia: ' + (G.players[G.starterPlayerId]?.name || 'Alguien');
-        starterInfo.style.display = 'block';
-    }
     showScreen('screen-role');
     clearInterval(G.refreshInterval);
     updatePlayersSidebar();
@@ -981,16 +990,16 @@ function startRound() {
     setTimeout(() => { G.roundStarting = false; }, 2000);
 }
 
-function showRoundStartOverlay(starterName) {
+function showRoundStartOverlay(starterName, starterAvatar, starterFrame) {
     const existing = document.getElementById('round-start-overlay');
     if (existing) existing.remove();
+    const avatar = AVATARS.find(a => a.id === starterAvatar) || AVATARS[0];
+    const frame = FRAMES.find(f => f.id === starterFrame);
+    const frameStyle = frame ? 'border: 6px solid ' + frame.color + '; box-shadow: 0 0 30px ' + frame.color + '60;' : '';
     const overlay = document.createElement('div');
     overlay.id = 'round-start-overlay';
     overlay.className = 'round-start-overlay';
-    overlay.innerHTML = '<div class="round-start-message">' +
-        '<h2>¡COMIENZA LA RONDA!</h2>' +
-        '<p>Empieza: <span class="starter-name">' + starterName + '</span></p>' +
-        '</div>';
+    overlay.innerHTML = '<div class="round-start-message"><h2>¡COMIENZA LA RONDA!</h2><div class="round-start-avatar" style="' + frameStyle + '"><img src="' + avatar.image + '" alt="avatar"></div><p>Empieza: <span class="starter-name">' + starterName + '</span></p></div>';
     document.body.appendChild(overlay);
 }
 
@@ -1029,11 +1038,14 @@ function handleStartRound(msg) {
     if (btnSkip) btnSkip.style.display = 'none';
     const starterName = G.players[G.starterPlayerId]?.name || 'Alguien';
     if (G.isSpectator) {
+        const btnSpecNext = document.getElementById('btn-spectator-next');
+        if (btnSpecNext) { btnSpecNext.style.display = 'none'; btnSpecNext.disabled = true; }
         document.getElementById('spectator-status').textContent = starterName + ' inicia!';
         setTimeout(function() { startSpectatorTimer(msg.time); }, ROUND_START_DISPLAY_TIME);
         return;
     }
-    showRoundStartOverlay(starterName);
+    const starter = G.players[G.starterPlayerId] || {};
+    showRoundStartOverlay(starterName, starter.avatar || 'avatar-11', starter.frame || 'fr-basic');
     setTimeout(function() {
         hideRoundStartOverlay();
         showStarterBanner(starterName);
