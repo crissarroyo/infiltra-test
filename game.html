@@ -2,7 +2,6 @@
 <html lang="es-MX">
 <head>
     <meta charset="UTF-8">
-    <!-- Google Analytics -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-HT02ZX6MDK"></script>
     <script>
         window.dataLayer = window.dataLayer || [];
@@ -39,7 +38,6 @@
     </div>
 </header>
         <main class="game-container">
-            <!-- PANTALLA HOME -->
             <div id="screen-home" class="screen active">
                 <div class="game-card">
                     <div class="card-header">
@@ -47,7 +45,6 @@
                         <p>Configura tu perfil y comienza a jugar</p>
                     </div>
                     
-                    <!-- Vista previa del perfil -->
                     <div class="profile-preview" id="profile-preview">
                         <div class="preview-avatar-wrapper" id="preview-avatar-wrapper">
                             <div class="preview-avatar" id="preview-avatar"></div>
@@ -83,7 +80,6 @@
                 </div>
             </div>
             
-            <!-- PANTALLA CONFIG -->
             <div id="screen-config" class="screen">
                 <div class="game-card">
                     <div class="card-header">
@@ -96,13 +92,13 @@
                             <input type="number" id="config-max-players" class="form-input" value="10" min="3" max="10">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Infiltrados</label>
+                            <label class="form-label"><img src="assets/icons/icon-impostor.png" alt="" class="config-role-icon"> Infiltrados</label>
                             <input type="number" id="config-impostors" class="form-input" value="1" min="1" max="5">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label class="form-label">Charlatanes</label>
+                            <label class="form-label"><img src="assets/icons/icon-charlatan.png" alt="" class="config-role-icon"> Charlatanes</label>
                             <input type="number" id="config-charlatans" class="form-input" value="0" min="0" max="3">
                         </div>
                         <div class="form-group">
@@ -137,7 +133,6 @@
                 </div>
             </div>
             
-            <!-- PANTALLA LOBBY -->
             <div id="screen-lobby" class="screen">
                 <div class="game-card">
                     <div class="card-header">
@@ -167,44 +162,50 @@
                 </div>
             </div>
             
-            <!-- PANTALLA ROL -->
             <div id="screen-role" class="screen">
-                <div class="game-card">
+                <div class="game-card game-card-wide">
                     <div class="card-header">
                         <h1>TU ROL SECRETO</h1>
                         <p id="role-instruction">Toca la carta para revelar</p>
                     </div>
                     <div class="starter-info" id="starter-info" style="display:none"></div>
-                    <div class="role-display">
-                        <div class="role-card blurred" id="role-card">
-                            <div class="role-icon" id="role-icon">
-                                <img src="assets/icons/icon-help.png" alt="?" class="role-icon-img">
-                            </div>
-                            <div class="role-title" id="role-title">SECRETO</div>
-                            <div class="role-word" id="role-word">???</div>
+                    <div class="role-layout">
+                        <div class="role-players-panel" id="role-players-panel">
+                            <div class="role-players-title">Jugadores en esta ronda</div>
+                            <div class="role-players-list" id="role-players-list"></div>
                         </div>
-                    </div>
-                    <div class="points-box" id="points-box" style="display:none">
-                        <h4>Recuerda - Sistema de Puntos</h4>
-                        <ul id="points-list"></ul>
-                    </div>
-                    <div class="timer" id="timer" style="display:none">00:00</div>
-                    <p class="status-text" id="wait-message">Espera a que el host inicie la ronda...</p>
-                    <div class="btn-group">
-                        <button class="btn btn-primary" id="btn-start-round" style="display:none">
-                            Iniciar Ronda
-                        </button>
-                        <button class="btn btn-secondary" id="btn-skip-word" style="display:none">
-                            Cambiar Palabra
-                        </button>
-                        <button class="btn btn-danger" id="btn-leave-role">
-                            Abandonar
-                        </button>
+                        <div class="role-main-panel">
+                            <div class="role-display">
+                                <div class="role-card blurred" id="role-card">
+                                    <div class="role-icon" id="role-icon">
+                                        <img src="assets/icons/icon-help.png" alt="?" class="role-icon-img">
+                                    </div>
+                                    <div class="role-title" id="role-title">SECRETO</div>
+                                    <div class="role-word" id="role-word">???</div>
+                                </div>
+                            </div>
+                            <div class="points-box" id="points-box" style="display:none">
+                                <h4>Recuerda - Sistema de Puntos</h4>
+                                <ul id="points-list"></ul>
+                            </div>
+                            <div class="timer" id="timer" style="display:none">00:00</div>
+                            <p class="status-text" id="wait-message">Espera a que el host inicie la ronda...</p>
+                            <div class="btn-group">
+                                <button class="btn btn-primary" id="btn-start-round" style="display:none">
+                                    Iniciar Ronda
+                                </button>
+                                <button class="btn btn-secondary" id="btn-skip-word" style="display:none">
+                                    Cambiar Palabra
+                                </button>
+                                <button class="btn btn-danger" id="btn-leave-role">
+                                    Abandonar
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
             
-            <!-- PANTALLA VOTACIÓN -->
             <div id="screen-voting" class="screen">
                 <div class="game-card">
                     <div class="card-header">
@@ -222,7 +223,6 @@
                 </div>
             </div>
             
-            <!-- PANTALLA RESULTADOS -->
             <div id="screen-results" class="screen">
                 <div class="game-card">
                     <div class="card-header">
@@ -245,7 +245,6 @@
                 </div>
             </div>
             
-            <!-- PANTALLA GAME OVER -->
             <div id="screen-gameover" class="screen">
                 <div class="game-card">
                     <div class="card-header">
@@ -272,7 +271,6 @@
                 </div>
             </div>
             
-            <!-- PANTALLA ESPECTADOR -->
             <div id="screen-spectator" class="screen">
                 <div class="game-card">
                     <div class="card-header">
@@ -305,7 +303,6 @@
                 </div>
             </div>
             
-            <!-- PANTALLA AYUDA -->
             <div id="screen-help" class="screen">
                 <div class="game-card">
                     <div class="card-header">
