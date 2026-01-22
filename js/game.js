@@ -271,12 +271,10 @@ function updateRolePlayersList() {
         const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
         const frame = FRAMES.find(f => f.id === p?.frame);
         const frameStyle = frame ? 'border:2px solid ' + frame.color + ';' : '';
-        const statusIcon = isEliminated ? ICONS.eliminated : ICONS.active;
         
         return '<div class="role-player-item' + (isEliminated ? ' eliminated' : '') + (isMe ? ' is-me' : '') + '">' +
             '<div class="role-player-avatar"><img src="' + avatar.image + '" style="' + frameStyle + 'border-radius:50%;width:100%;height:100%;"></div>' +
             '<span class="role-player-name">' + (p?.name || id.substring(0, 8)) + (isMe ? ' (Tú)' : '') + '</span>' +
-            '<img src="' + statusIcon + '" alt="" class="role-player-status">' +
             '</div>';
     }).join('');
 }
@@ -381,7 +379,8 @@ function showScreen(id) {
     const screen = document.getElementById(id);
     if (screen) screen.classList.add('active');
     
-    if (id === 'screen-role' || id === 'screen-voting') {
+    // Sidebar flotante solo en votación (en rol ya está integrado en el card)
+    if (id === 'screen-voting') {
         showPlayersSidebar();
     } else {
         hidePlayersSidebar();
