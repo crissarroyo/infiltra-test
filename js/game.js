@@ -1,17 +1,10 @@
 /**
- * INFILTRA - Game Logic v0.9.8.9
+ * INFILTRA - Game Logic v0.9.9.0
  * Correcciones:
- * - QR centrado con instrucciones
- * - Mensaje de inicio de ronda más visible y persistente
- * - Mensaje "Has sido expulsado" primero
- * - Avatares con marco en resultados de votación
- * - Resultados de expulsión centrados con icono de rol
- * - Lista de jugadores lateral durante rondas
- * - Botones host diferenciados (Iniciar vs Siguiente)
- * - Prevención de multi-click en iniciar ronda
- * - Pantalla de fin de juego mejorada
- * - Ordenamiento por puntos con medallas
- * - Botón kick con icono
+ * - Fix Kick Button (eliminación local inmediata)
+ * - Fix Límite de jugadores (rechazo antes de agregar)
+ * - Lista de jugadores activa en pantalla de rol (desktop y móvil)
+ * - Iconos en configuración
  */
 
 const ICONS = {
@@ -142,7 +135,7 @@ function init() {
     checkURLParams();
     updateProfilePreview();
     createPlayersSidebar();
-    console.log('INFILTRA v0.9.8.9 iniciado');
+    console.log('INFILTRA v0.9.9.0 iniciado');
 }
 
 function loadProfile() {
@@ -263,6 +256,29 @@ function createPlayersSidebar() {
     sidebar.className = 'players-sidebar';
     sidebar.innerHTML = '<div class="players-sidebar-title">Jugadores</div><div class="players-sidebar-list" id="sidebar-players-list"></div>';
     document.body.appendChild(sidebar);
+}
+
+function updateRolePlayersList() {
+    const list = document.getElementById('role-players-list');
+    if (!list) return;
+    
+    const allPlayerIds = G.activePlayers.length > 0 ? G.activePlayers : Object.keys(G.players);
+    
+    list.innerHTML = allPlayerIds.map(id => {
+        const p = G.players[id];
+        const isEliminated = G.eliminated.includes(id);
+        const isMe = id === G.myId;
+        const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
+        const frame = FRAMES.find(f => f.id === p?.frame);
+        const frameStyle = frame ? 'border:2px solid ' + frame.color + ';' : '';
+        const statusIcon = isEliminated ? ICONS.eliminated : ICONS.active;
+        
+        return '<div class="role-player-item' + (isEliminated ? ' eliminated' : '') + (isMe ? ' is-me' : '') + '">' +
+            '<div class="role-player-avatar"><img src="' + avatar.image + '" style="' + frameStyle + 'border-radius:50%;width:100%;height:100%;"></div>' +
+            '<span class="role-player-name">' + (p?.name || id.substring(0, 8)) + (isMe ? ' (Tú)' : '') + '</span>' +
+            '<img src="' + statusIcon + '" alt="" class="role-player-status">' +
+            '</div>';
+    }).join('');
 }
 
 function updatePlayersSidebar() {
@@ -481,15 +497,25 @@ function onMessage(event) {
             break;
         case 'player_state':
             const currentCount = Object.keys(G.players).length;
-            if (!G.players[sender] && currentCount >= G.maxPlayers && sender !== G.myId) {
+            const isNewPlayer = !G.players[sender];
+            if (isNewPlayer && currentCount >= G.maxPlayers && sender !== G.myId) {
                 if (G.isHost) {
                     G.pubnub.publish({ channel: G.channel, message: { type: 'room_full', targetId: sender } });
                 }
                 return;
             }
+            if (isNewPlayer && currentCount >= G.maxPlayers) {
+                return;
+            }
             G.players[sender] = { name: msg.name, avatar: msg.avatar, frame: msg.frame };
             if (G.scores[sender] === undefined) G.scores[sender] = 0;
             renderPlayerList();
+            break;
+        case 'room_full':
+            if (msg.targetId === G.myId) {
+                toast('Sala llena', 'error');
+                setTimeout(exitGame, 1500);
+            }
             break;
         case 'assign':
             handleAssign(msg);
@@ -737,6 +763,9 @@ function kickPlayer(playerId) {
     if (!G.isHost || !G.pubnub) return;
     const playerName = G.players[playerId]?.name || 'Jugador';
     if (confirm('¿Expulsar a ' + playerName + '?')) {
+        delete G.players[playerId];
+        delete G.scores[playerId];
+        renderPlayerList();
         G.pubnub.publish({
             channel: G.channel,
             message: { type: 'kick_player', targetId: playerId, targetName: playerName }
@@ -936,6 +965,7 @@ function handleAssign(msg) {
     showScreen('screen-role');
     clearInterval(G.refreshInterval);
     updatePlayersSidebar();
+    updateRolePlayersList();
 }
 
 function revealRole() {
@@ -1281,6 +1311,7 @@ function showResults(msg) {
         G.eliminated.push(msg.eliminatedId);
     }
     updatePlayersSidebar();
+    updateRolePlayersList();
     if (msg.eliminatedId === G.myId) {
         G.isSpectator = true;
         G.fullRoles = msg.fullRoles || G.fullRoles;
@@ -1424,6 +1455,7 @@ function handleNextRound(msg) {
     if (btnSkip) btnSkip.style.display = G.isHost ? 'block' : 'none';
     showScreen('screen-role');
     updatePlayersSidebar();
+    updateRolePlayersList();
 }
 
 function checkGameOver() {
@@ -1615,4 +1647,4 @@ function toast(message, type) {
 }
 
 window.G = G;
-console.log('INFILTRA v0.9.8.9 cargado completamente');
+console.log('INFILTRA v0.9.9.0 cargado completamente');
