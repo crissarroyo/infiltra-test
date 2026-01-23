@@ -1,0 +1,342 @@
+/**
+ * INFILTRA - Hexagonal Avatars & Frames CSS
+ * v0.9.9.1 - Sistema de avatares hexagonales con 10 marcos de colores
+ */
+
+/* ============================================
+   VARIABLES DE COLORES DE MARCOS
+   ============================================ */
+:root {
+    --frame-none: transparent;
+    --frame-silver: #a8b5c4;
+    --frame-gold: #f4c542;
+    --frame-bronze: #cd7f32;
+    --frame-ruby: #e63946;
+    --frame-emerald: #2ecc71;
+    --frame-sapphire: #3498db;
+    --frame-amethyst: #9b59b6;
+    --frame-obsidian: #2c3e50;
+    --frame-flame: #ff6b35;
+}
+
+/* ============================================
+   CONTENEDOR DE AVATAR HEXAGONAL
+   ============================================ */
+.hex-avatar-container {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    --frame-color: transparent;
+}
+
+.hex-avatar-container .hex-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: relative;
+    z-index: 1;
+}
+
+/* Marco hexagonal que sigue el contorno del avatar */
+.hex-avatar-container .hex-avatar-frame {
+    position: absolute;
+    inset: -3px;
+    z-index: 0;
+    background: linear-gradient(135deg, var(--frame-color), rgba(255,255,255,0.3), var(--frame-color));
+    clip-path: polygon(50% 0%, 95% 18%, 95% 82%, 50% 100%, 5% 82%, 5% 18%);
+    filter: drop-shadow(0 0 6px var(--frame-color));
+    animation: frame-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes frame-glow {
+    0% { filter: drop-shadow(0 0 4px var(--frame-color)); }
+    100% { filter: drop-shadow(0 0 10px var(--frame-color)); }
+}
+
+/* ============================================
+   PREVIEW DEL PERFIL (pantalla principal)
+   ============================================ */
+.preview-avatar-wrapper.hex-frame {
+    width: 100px;
+    height: 115px;
+    border-radius: 0;
+    border: none !important;
+    box-shadow: none !important;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+}
+
+.preview-avatar-wrapper.hex-frame::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    background: linear-gradient(135deg, var(--frame-color), rgba(255,255,255,0.4), var(--frame-color));
+    clip-path: polygon(50% 0%, 95% 18%, 95% 82%, 50% 100%, 5% 82%, 5% 18%);
+    z-index: 0;
+    filter: drop-shadow(0 0 8px var(--frame-color));
+}
+
+.preview-avatar-wrapper.hex-frame.no-frame::before {
+    display: none;
+}
+
+.preview-avatar-wrapper.hex-frame .preview-avatar {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+}
+
+.preview-avatar-wrapper.hex-frame .preview-avatar img,
+.preview-avatar-wrapper.hex-frame .hex-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* ============================================
+   GRID DE SELECCIÓN DE AVATARES
+   ============================================ */
+.avatar-option.hex-avatar-option {
+    width: 60px;
+    height: 70px;
+    border-radius: 0;
+    background: transparent;
+    border: none;
+    position: relative;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.avatar-option.hex-avatar-option:hover {
+    transform: scale(1.1);
+}
+
+.avatar-option.hex-avatar-option .hex-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.avatar-option.hex-avatar-option.selected::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-light));
+    clip-path: polygon(50% 0%, 95% 18%, 95% 82%, 50% 100%, 5% 82%, 5% 18%);
+    z-index: -1;
+    animation: selected-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes selected-pulse {
+    0%, 100% { opacity: 0.8; }
+    50% { opacity: 1; }
+}
+
+.avatar-option.hex-avatar-option .avatar-check {
+    position: absolute;
+    bottom: -5px;
+    right: -5px;
+    width: 20px;
+    height: 20px;
+    background: var(--success);
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: white;
+    z-index: 5;
+}
+
+.avatar-option.hex-avatar-option.selected .avatar-check {
+    display: flex;
+}
+
+/* ============================================
+   GRID DE SELECCIÓN DE MARCOS
+   ============================================ */
+.frame-option-new.hex-frame-option {
+    width: 55px;
+    height: 65px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.05);
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.frame-option-new.hex-frame-option:hover {
+    background: rgba(255,255,255,0.1);
+    transform: scale(1.05);
+}
+
+.frame-option-new.hex-frame-option.selected {
+    border-color: var(--accent);
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.frame-preview.hex-frame-preview {
+    width: 45px;
+    height: 52px;
+    position: relative;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent;
+}
+
+.frame-preview.hex-frame-preview::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    background: linear-gradient(135deg, var(--frame-color), rgba(255,255,255,0.3), var(--frame-color));
+    clip-path: polygon(50% 0%, 95% 18%, 95% 82%, 50% 100%, 5% 82%, 5% 18%);
+    z-index: 0;
+    filter: drop-shadow(0 0 5px var(--frame-color));
+}
+
+.frame-preview.hex-frame-preview.no-frame::before {
+    background: rgba(255,255,255,0.1);
+    filter: none;
+}
+
+.frame-preview.hex-frame-preview .hex-frame-inner {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.frame-preview.hex-frame-preview .frame-preview-img {
+    width: 30px;
+    height: 30px;
+    object-fit: contain;
+}
+
+/* ============================================
+   LISTA DE JUGADORES - AVATARES HEXAGONALES
+   ============================================ */
+.player-avatar .hex-avatar-container,
+.vote-avatar .hex-avatar-container,
+.result-avatar .hex-avatar-container,
+.score-avatar .hex-avatar-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ============================================
+   LISTA DE JUGADORES EN PANTALLA DE ROL
+   ============================================ */
+.role-player-item .role-player-avatar .hex-avatar-container {
+    width: 32px;
+    height: 37px;
+}
+
+.role-player-item .role-player-avatar .hex-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+/* ============================================
+   SIDEBAR DE JUGADORES
+   ============================================ */
+.sidebar-player-avatar .hex-avatar-container {
+    width: 28px;
+    height: 32px;
+}
+
+/* ============================================
+   OVERLAY DE INICIO DE RONDA
+   ============================================ */
+.round-start-avatar.hex-avatar-container {
+    margin: 1.5rem auto;
+}
+
+.round-start-avatar .hex-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.round-start-avatar .hex-avatar-frame {
+    inset: -5px;
+}
+
+/* ============================================
+   AJUSTES PARA VOTACIÓN
+   ============================================ */
+.vote-item .vote-avatar .hex-avatar-container {
+    width: 48px;
+    height: 55px;
+}
+
+/* ============================================
+   AJUSTES PARA RESULTADOS
+   ============================================ */
+.result-item .result-avatar .hex-avatar-container {
+    width: 36px;
+    height: 41px;
+}
+
+/* ============================================
+   AJUSTES PARA PUNTUACIONES FINALES
+   ============================================ */
+.score-item .score-avatar .hex-avatar-container {
+    width: 44px;
+    height: 50px;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 480px) {
+    .avatar-option.hex-avatar-option {
+        width: 50px;
+        height: 58px;
+    }
+    
+    .frame-option-new.hex-frame-option {
+        width: 48px;
+        height: 56px;
+    }
+    
+    .frame-preview.hex-frame-preview {
+        width: 38px;
+        height: 44px;
+    }
+    
+    .preview-avatar-wrapper.hex-frame {
+        width: 80px;
+        height: 92px;
+    }
+}
+
+/* ============================================
+   GRID DE MARCOS - 10 COLORES (2 FILAS DE 5)
+   ============================================ */
+.frame-grid-new {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    max-width: 320px;
+}
+
+@media (max-width: 380px) {
+    .frame-grid-new {
+        grid-template-columns: repeat(5, 1fr);
+        gap: 6px;
+    }
+}
