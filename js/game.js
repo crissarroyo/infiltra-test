@@ -1,10 +1,9 @@
 /**
- * INFILTRA - Game Logic v0.9.9.0
- * Correcciones:
- * - Fix Kick Button (eliminación local inmediata)
- * - Fix Límite de jugadores (rechazo antes de agregar)
- * - Lista de jugadores activa en pantalla de rol (desktop y móvil)
- * - Iconos en configuración
+ * INFILTRA - Game Logic v0.9.9.1
+ * Cambios:
+ * - Nuevos avatares PNG hexagonales (avatar-01 a avatar-14)
+ * - 10 colores de marcos adaptados a forma hexagonal
+ * - Sistema de clip-path para marcos hexagonales
  */
 
 const ICONS = {
@@ -55,19 +54,30 @@ const DB = {
     "Superhéroes": ["Superman", "Batman", "Spider-Man", "Wonder Woman", "Iron Man", "Captain America", "Thor", "Hulk", "Flash", "Aquaman", "Wolverine", "Deadpool"]
 };
 
+// Nuevos avatares PNG hexagonales
 const AVATARS = [
-    { id: 'avatar-11', image: 'assets/avatars/avatar-11.svg' },
-    { id: 'avatar-12', image: 'assets/avatars/avatar-12.svg' },
-    { id: 'avatar-13', image: 'assets/avatars/avatar-13.svg' },
-    { id: 'avatar-16', image: 'assets/avatars/avatar-16.svg' },
-    { id: 'avatar-17', image: 'assets/avatars/avatar-17.svg' }
+    { id: 'avatar-01', image: 'assets/avatars/avatar-01.png' },
+    { id: 'avatar-02', image: 'assets/avatars/avatar-02.png' },
+    { id: 'avatar-03', image: 'assets/avatars/avatar-03.png' },
+    { id: 'avatar-04', image: 'assets/avatars/avatar-04.png' },
+    { id: 'avatar-11', image: 'assets/avatars/avatar-11.png' },
+    { id: 'avatar-12', image: 'assets/avatars/avatar-12.png' },
+    { id: 'avatar-13', image: 'assets/avatars/avatar-13.png' },
+    { id: 'avatar-14', image: 'assets/avatars/avatar-14.png' }
 ];
 
+// 10 colores de marcos para avatares hexagonales
 const FRAMES = [
-    { id: 'fr-basic', color: '#4a5568', locked: false },
-    { id: 'fr-gold', color: '#c9a227', locked: false },
-    { id: 'fr-red', color: '#8b2635', locked: false },
-    { id: 'fr-purple', color: '#7c3aed', locked: false }
+    { id: 'fr-none', color: 'transparent', name: 'Sin Marco', locked: false },
+    { id: 'fr-silver', color: '#a8b5c4', name: 'Plata', locked: false },
+    { id: 'fr-gold', color: '#f4c542', name: 'Oro', locked: false },
+    { id: 'fr-bronze', color: '#cd7f32', name: 'Bronce', locked: false },
+    { id: 'fr-ruby', color: '#e63946', name: 'Rubí', locked: false },
+    { id: 'fr-emerald', color: '#2ecc71', name: 'Esmeralda', locked: false },
+    { id: 'fr-sapphire', color: '#3498db', name: 'Zafiro', locked: false },
+    { id: 'fr-amethyst', color: '#9b59b6', name: 'Amatista', locked: false },
+    { id: 'fr-obsidian', color: '#2c3e50', name: 'Obsidiana', locked: false },
+    { id: 'fr-flame', color: '#ff6b35', name: 'Llama', locked: false }
 ];
 
 const RESULT_DISPLAY_TIME = 5000;
@@ -78,8 +88,8 @@ let G = {
     channel: null,
     myId: null,
     playerName: '',
-    avatar: 'avatar-11',
-    frame: 'fr-basic',
+    avatar: 'avatar-01',
+    frame: 'fr-none',
     isHost: false,
     hostId: null,
     maxPlayers: 10,
@@ -135,7 +145,7 @@ function init() {
     checkURLParams();
     updateProfilePreview();
     createPlayersSidebar();
-    console.log('INFILTRA v0.9.9.0 iniciado');
+    console.log('INFILTRA v0.9.9.1 iniciado');
 }
 
 function loadProfile() {
@@ -164,12 +174,20 @@ function updateProfilePreview() {
     const previewName = document.getElementById('preview-name');
     if (!previewAvatar || !previewWrapper) return;
     const avatar = AVATARS.find(a => a.id === G.avatar) || AVATARS[0];
-    previewAvatar.innerHTML = '<img src="' + avatar.image + '" alt="avatar">';
     const frame = FRAMES.find(f => f.id === G.frame);
-    if (frame) {
-        previewWrapper.style.border = '4px solid ' + frame.color;
-        previewWrapper.style.boxShadow = '0 0 15px ' + frame.color + '40';
+    
+    // Avatar hexagonal con marco
+    previewAvatar.innerHTML = '<img src="' + avatar.image + '" alt="avatar" class="hex-avatar-img">';
+    
+    // Aplicar marco hexagonal
+    if (frame && frame.color !== 'transparent') {
+        previewWrapper.className = 'preview-avatar-wrapper hex-frame';
+        previewWrapper.style.setProperty('--frame-color', frame.color);
+    } else {
+        previewWrapper.className = 'preview-avatar-wrapper hex-frame no-frame';
+        previewWrapper.style.setProperty('--frame-color', 'transparent');
     }
+    
     if (previewName) previewName.textContent = document.getElementById('input-name')?.value || 'Tu Nombre';
 }
 
@@ -180,8 +198,8 @@ function initAvatars() {
     if (!G.avatar || !AVATARS.find(a => a.id === G.avatar)) G.avatar = AVATARS[0].id;
     AVATARS.forEach(avatar => {
         const div = document.createElement('div');
-        div.className = 'avatar-option' + (avatar.id === G.avatar ? ' selected' : '');
-        div.innerHTML = '<img src="' + avatar.image + '" alt="' + avatar.id + '"><div class="avatar-check">✓</div>';
+        div.className = 'avatar-option hex-avatar-option' + (avatar.id === G.avatar ? ' selected' : '');
+        div.innerHTML = '<img src="' + avatar.image + '" alt="' + avatar.id + '" class="hex-avatar-img"><div class="avatar-check">✓</div>';
         div.onclick = function() {
             G.avatar = avatar.id;
             grid.querySelectorAll('.avatar-option').forEach(el => el.classList.remove('selected'));
@@ -200,12 +218,18 @@ function initFrames() {
     if (!G.frame || !FRAMES.find(f => f.id === G.frame)) G.frame = FRAMES[0].id;
     FRAMES.forEach(frame => {
         const div = document.createElement('div');
-        div.className = 'frame-option-new' + (frame.id === G.frame ? ' selected' : '') + (frame.locked ? ' locked' : '');
+        div.className = 'frame-option-new hex-frame-option' + (frame.id === G.frame ? ' selected' : '') + (frame.locked ? ' locked' : '');
         const preview = document.createElement('div');
-        preview.className = 'frame-preview';
-        preview.style.border = '4px solid ' + frame.color;
-        preview.style.boxShadow = '0 0 10px ' + frame.color + '60';
-        preview.innerHTML = '<img src="' + ICONS.citizen + '" alt="" class="frame-preview-img">';
+        preview.className = 'frame-preview hex-frame-preview';
+        
+        if (frame.color !== 'transparent') {
+            preview.style.setProperty('--frame-color', frame.color);
+            preview.innerHTML = '<div class="hex-frame-inner"><img src="' + ICONS.citizen + '" alt="" class="frame-preview-img"></div>';
+        } else {
+            preview.classList.add('no-frame');
+            preview.innerHTML = '<div class="hex-frame-inner"><img src="' + ICONS.citizen + '" alt="" class="frame-preview-img"></div>';
+        }
+        
         div.appendChild(preview);
         const check = document.createElement('div');
         check.className = 'frame-check';
@@ -268,12 +292,9 @@ function updateRolePlayersList() {
         const p = G.players[id];
         const isEliminated = G.eliminated.includes(id);
         const isMe = id === G.myId;
-        const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
-        const frame = FRAMES.find(f => f.id === p?.frame);
-        const frameStyle = frame ? 'border:2px solid ' + frame.color + ';' : '';
         
         return '<div class="role-player-item' + (isEliminated ? ' eliminated' : '') + (isMe ? ' is-me' : '') + '">' +
-            '<div class="role-player-avatar"><img src="' + avatar.image + '" style="' + frameStyle + 'border-radius:50%;width:100%;height:100%;"></div>' +
+            '<div class="role-player-avatar">' + renderHexAvatar(id, 32) + '</div>' +
             '<span class="role-player-name">' + (p?.name || id.substring(0, 8)) + (isMe ? ' (Tú)' : '') + '</span>' +
             '</div>';
     }).join('');
@@ -288,11 +309,8 @@ function updatePlayersSidebar() {
     list.innerHTML = allPlayerIds.map(id => {
         const p = G.players[id];
         const isEliminated = G.eliminated.includes(id);
-        const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
-        const frame = FRAMES.find(f => f.id === p?.frame);
-        const frameStyle = frame ? 'border:2px solid ' + frame.color + ';' : '';
         return '<div class="sidebar-player' + (isEliminated ? ' eliminated' : '') + '">' +
-            '<div class="sidebar-player-avatar"><img src="' + avatar.image + '" style="' + frameStyle + 'border-radius:50%;width:100%;height:100%;"></div>' +
+            '<div class="sidebar-player-avatar">' + renderHexAvatar(id, 28) + '</div>' +
             '<span class="sidebar-player-name">' + (p?.name || id.substring(0, 8)) + '</span></div>';
     }).join('');
 }
@@ -379,7 +397,6 @@ function showScreen(id) {
     const screen = document.getElementById(id);
     if (screen) screen.classList.add('active');
     
-    // Sidebar flotante solo en votación (en rol ya está integrado en el card)
     if (id === 'screen-voting') {
         showPlayersSidebar();
     } else {
@@ -697,8 +714,8 @@ function refreshPlayers() {
                 if (!G.players[o.uuid]) {
                     G.players[o.uuid] = {
                         name: o.state?.name || o.uuid.substring(0, 8),
-                        avatar: o.state?.avatar || 'avatar-11',
-                        frame: o.state?.frame || 'fr-basic'
+                        avatar: o.state?.avatar || 'avatar-01',
+                        frame: o.state?.frame || 'fr-none'
                     };
                 } else if (o.state) {
                     G.players[o.uuid].name = o.state.name || G.players[o.uuid].name;
@@ -712,13 +729,24 @@ function refreshPlayers() {
     });
 }
 
-function renderPlayerAvatar(playerId, size) {
+// Función para renderizar avatar hexagonal con marco
+function renderHexAvatar(playerId, size) {
     size = size || 40;
     const p = G.players[playerId];
     const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
     const frame = FRAMES.find(f => f.id === p?.frame);
-    const frameStyle = frame ? 'border:3px solid ' + frame.color + ';' : '';
-    return '<img src="' + avatar.image + '" style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;object-fit:cover;' + frameStyle + '">';
+    const hasFrame = frame && frame.color !== 'transparent';
+    const frameColor = hasFrame ? frame.color : 'transparent';
+    
+    return '<div class="hex-avatar-container" style="width:' + size + 'px;height:' + (size * 1.15) + 'px;--frame-color:' + frameColor + '">' +
+        '<img src="' + avatar.image + '" alt="" class="hex-avatar-img">' +
+        (hasFrame ? '<div class="hex-avatar-frame"></div>' : '') +
+        '</div>';
+}
+
+// Mantener compatibilidad con renderPlayerAvatar pero usando hexagonal
+function renderPlayerAvatar(playerId, size) {
+    return renderHexAvatar(playerId, size);
 }
 
 function renderPlayerList() {
@@ -748,7 +776,7 @@ function renderPlayerList() {
             '<button class="btn-kick" onclick="kickPlayer(\'' + id + '\')" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>' : '';
         
         return '<div class="player-item">' + rankHtml +
-            '<div class="player-avatar">' + renderPlayerAvatar(id, 40) + '</div>' +
+            '<div class="player-avatar">' + renderHexAvatar(id, 40) + '</div>' +
             '<div class="player-info"><div class="player-name">' + p.name + (isMe ? ' (Tú)' : '') + '</div>' +
             (isHostPlayer ? '<div class="player-tag">Host</div>' : '') + '</div>' +
             '<div class="player-score">' + score + '</div>' + kickBtn + '</div>';
@@ -1024,11 +1052,18 @@ function showRoundStartOverlay(starterName, starterAvatar, starterFrame) {
     if (existing) existing.remove();
     const avatar = AVATARS.find(a => a.id === starterAvatar) || AVATARS[0];
     const frame = FRAMES.find(f => f.id === starterFrame);
-    const frameStyle = frame ? 'border: 6px solid ' + frame.color + '; box-shadow: 0 0 30px ' + frame.color + '60;' : '';
+    const hasFrame = frame && frame.color !== 'transparent';
+    const frameColor = hasFrame ? frame.color : 'transparent';
+    
     const overlay = document.createElement('div');
     overlay.id = 'round-start-overlay';
     overlay.className = 'round-start-overlay';
-    overlay.innerHTML = '<div class="round-start-message"><h2>¡COMIENZA LA RONDA!</h2><div class="round-start-avatar" style="' + frameStyle + '"><img src="' + avatar.image + '" alt="avatar"></div><p>Empieza: <span class="starter-name">' + starterName + '</span></p></div>';
+    overlay.innerHTML = '<div class="round-start-message"><h2>¡COMIENZA LA RONDA!</h2>' +
+        '<div class="round-start-avatar hex-avatar-container" style="width:100px;height:115px;--frame-color:' + frameColor + '">' +
+        '<img src="' + avatar.image + '" alt="avatar" class="hex-avatar-img">' +
+        (hasFrame ? '<div class="hex-avatar-frame"></div>' : '') +
+        '</div>' +
+        '<p>Empieza: <span class="starter-name">' + starterName + '</span></p></div>';
     document.body.appendChild(overlay);
 }
 
@@ -1074,7 +1109,7 @@ function handleStartRound(msg) {
         return;
     }
     const starter = G.players[G.starterPlayerId] || {};
-    showRoundStartOverlay(starterName, starter.avatar || 'avatar-11', starter.frame || 'fr-basic');
+    showRoundStartOverlay(starterName, starter.avatar || 'avatar-01', starter.frame || 'fr-none');
     setTimeout(function() {
         hideRoundStartOverlay();
         showStarterBanner(starterName);
@@ -1167,7 +1202,7 @@ function renderVotingList() {
     const votable = G.activePlayers.filter(id => id !== G.myId && !G.eliminated.includes(id));
     list.innerHTML = votable.map(id => 
         '<div class="vote-item">' +
-        '<div class="vote-avatar">' + renderPlayerAvatar(id, 48) + '</div>' +
+        '<div class="vote-avatar">' + renderHexAvatar(id, 48) + '</div>' +
         '<div class="player-info"><div class="player-name">' + (G.players[id]?.name || id) + '</div></div>' +
         '<button class="btn-vote" data-target="' + id + '">Votar</button></div>'
     ).join('');
@@ -1343,7 +1378,7 @@ function showResults(msg) {
             return '<div class="result-item">' +
                 '<div class="result-header">' +
                 '<div class="result-player">' +
-                '<div class="result-avatar">' + renderPlayerAvatar(id, 36) + '</div>' +
+                '<div class="result-avatar">' + renderHexAvatar(id, 36) + '</div>' +
                 '<span class="result-name">' + (G.players[id]?.name || id) + '</span>' +
                 '</div>' +
                 '<span class="result-votes">' + count + ' votos</span>' +
@@ -1507,7 +1542,7 @@ function handleGameOver(msg) {
         else if (idx === 2) rankHtml = '<div class="score-rank"><img src="' + ICONS.medalBronze + '" alt="3"></div>';
         else rankHtml = '<div class="score-rank"><span class="score-rank-number">' + (idx + 1) + '</span></div>';
         return '<div class="score-item">' + rankHtml +
-            '<div class="score-avatar">' + renderPlayerAvatar(id, 44) + '</div>' +
+            '<div class="score-avatar">' + renderHexAvatar(id, 44) + '</div>' +
             '<div class="score-info">' +
             '<div class="score-name">' + (p?.name || id) + '</div>' +
             '<div class="score-role">' + (role?.role || '') + '</div>' +
@@ -1577,7 +1612,7 @@ function updateSpectatorRoles() {
         const isActive = G.activePlayers.includes(id);
         const statusIcon = isActive ? ICONS.active : ICONS.eliminated;
         return '<div class="player-item" style="opacity:' + (isActive ? 1 : 0.5) + '">' +
-            '<div class="player-avatar">' + renderPlayerAvatar(id, 36) + '</div>' +
+            '<div class="player-avatar">' + renderHexAvatar(id, 36) + '</div>' +
             '<div class="player-info">' +
             '<div class="player-name">' + (p?.name || id) + '</div>' +
             '<div class="player-tag">' + role.role + ' - ' + role.word + '</div>' +
@@ -1596,7 +1631,7 @@ function updateSpectatorVotes() {
         const hasVoted = G.votedPlayers.has(id);
         const statusIcon = hasVoted ? ICONS.voted : ICONS.pending;
         return '<div class="player-item">' +
-            '<div class="player-avatar">' + renderPlayerAvatar(id, 36) + '</div>' +
+            '<div class="player-avatar">' + renderHexAvatar(id, 36) + '</div>' +
             '<div class="player-info">' +
             '<div class="player-name">' + (p?.name || id) + '</div>' +
             '<div class="player-tag">' + (hasVoted ? 'Ha votado' : 'Pendiente') + '</div>' +
@@ -1646,4 +1681,4 @@ function toast(message, type) {
 }
 
 window.G = G;
-console.log('INFILTRA v0.9.9.0 cargado completamente');
+console.log('INFILTRA v0.9.9.1 cargado completamente');
