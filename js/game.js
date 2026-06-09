@@ -1,9 +1,12 @@
 /**
- * INFILTRA - Game Logic v0.9.9.1
+ * INFILTRA - Game Logic v1.0.0 (Firebase RTDB Edition)
  * Cambios:
- * - Nuevos avatares PNG hexagonales (avatar-01 a avatar-14)
- * - 10 colores de marcos adaptados a forma hexagonal
- * - Sistema de clip-path para marcos hexagonales
+ * - Migrado completamente de PubNub a Firebase Realtime Database
+ * - Estado de sala en rooms/{CODIGO} como árbol JSON
+ * - onValue para sincronización en tiempo real
+ * - onDisconnect() para detectar desconexiones
+ * - QR dinámico apuntando a URL actual
+ * - Palabra falsa del Charlatán siempre de la misma categoría (fix)
  */
 
 const ICONS = {
@@ -54,7 +57,6 @@ const DB = {
     "Superhéroes": ["Superman", "Batman", "Spider-Man", "Wonder Woman", "Iron Man", "Captain America", "Thor", "Hulk", "Flash", "Aquaman", "Wolverine", "Deadpool"]
 };
 
-// Nuevos avatares PNG hexagonales
 const AVATARS = [
     { id: 'avatar-01', image: 'assets/avatars/avatar-01.png' },
     { id: 'avatar-02', image: 'assets/avatars/avatar-02.png' },
@@ -66,7 +68,6 @@ const AVATARS = [
     { id: 'avatar-14', image: 'assets/avatars/avatar-14.png' }
 ];
 
-// 10 colores de marcos para avatares hexagonales
 const FRAMES = [
     { id: 'fr-none', color: 'transparent', name: 'Sin Marco', locked: false },
     { id: 'fr-silver', color: '#a8b5c4', name: 'Plata', locked: false },
@@ -83,8 +84,22 @@ const FRAMES = [
 const RESULT_DISPLAY_TIME = 5000;
 const ROUND_START_DISPLAY_TIME = 3500;
 
+// ── Firebase Config ──────────────────────────────────────────────
+const firebaseConfig = {
+    apiKey: "AIzaSyBWFKZMjIBKbUD45vSMBxlqVp7Dd36FzsM",
+    authDomain: "infiltra-5ff66.firebaseapp.com",
+    databaseURL: "https://infiltra-5ff66-default-rtdb.firebaseio.com",
+    projectId: "infiltra-5ff66",
+    storageBucket: "infiltra-5ff66.firebasestorage.app",
+    messagingSenderId: "49008737043",
+    appId: "1:49008737043:web:1b8716c6ffd57ad14238e6",
+    measurementId: "G-QVV2GJJD5M"
+};
+
+// ── Game State ───────────────────────────────────────────────────
 let G = {
-    pubnub: null,
+    db: null,              // Firebase Database instance
+    dbListeners: [],       // Active listeners for cleanup
     channel: null,
     myId: null,
     playerName: '',
@@ -111,13 +126,15 @@ let G = {
     currentFakeWord: null,
     starterPlayerId: null,
     gamePhase: 'home',
+    prevPhase: null,           // track prev phase for transitions
+    rolesVersion: 0,           // detect skip_word without phase change
+    resultsPublished: false,   // prevent double publish
     isSpectator: false,
     votes: {},
     votedPlayers: new Set(),
     voteTargets: {},
     timerInterval: null,
     voteTimerInterval: null,
-    refreshInterval: null,
     voteTimeout: null,
     spectatorTimerInterval: null,
     soundEnabled: true,
@@ -145,7 +162,7 @@ function init() {
     checkURLParams();
     updateProfilePreview();
     createPlayersSidebar();
-    console.log('INFILTRA v0.9.9.1 iniciado');
+    console.log('INFILTRA v1.0.0 (Firebase) iniciado');
 }
 
 function loadProfile() {
@@ -175,11 +192,7 @@ function updateProfilePreview() {
     if (!previewAvatar || !previewWrapper) return;
     const avatar = AVATARS.find(a => a.id === G.avatar) || AVATARS[0];
     const frame = FRAMES.find(f => f.id === G.frame);
-    
-    // Avatar hexagonal con marco
     previewAvatar.innerHTML = '<img src="' + avatar.image + '" alt="avatar" class="hex-avatar-img">';
-    
-    // Aplicar marco hexagonal
     if (frame && frame.color !== 'transparent') {
         previewWrapper.className = 'preview-avatar-wrapper hex-frame';
         previewWrapper.style.setProperty('--frame-color', frame.color);
@@ -187,7 +200,6 @@ function updateProfilePreview() {
         previewWrapper.className = 'preview-avatar-wrapper hex-frame no-frame';
         previewWrapper.style.setProperty('--frame-color', 'transparent');
     }
-    
     if (previewName) previewName.textContent = document.getElementById('input-name')?.value || 'Tu Nombre';
 }
 
@@ -221,7 +233,6 @@ function initFrames() {
         div.className = 'frame-option-new hex-frame-option' + (frame.id === G.frame ? ' selected' : '') + (frame.locked ? ' locked' : '');
         const preview = document.createElement('div');
         preview.className = 'frame-preview hex-frame-preview';
-        
         if (frame.color !== 'transparent') {
             preview.style.setProperty('--frame-color', frame.color);
             preview.innerHTML = '<div class="hex-frame-inner"><img src="' + ICONS.citizen + '" alt="" class="frame-preview-img"></div>';
@@ -229,7 +240,6 @@ function initFrames() {
             preview.classList.add('no-frame');
             preview.innerHTML = '<div class="hex-frame-inner"><img src="' + ICONS.citizen + '" alt="" class="frame-preview-img"></div>';
         }
-        
         div.appendChild(preview);
         const check = document.createElement('div');
         check.className = 'frame-check';
@@ -251,7 +261,7 @@ function initFrames() {
 function initCategories() {
     const list = document.getElementById('categories-list');
     if (!list) return;
-    list.innerHTML = Object.keys(DB).map(cat => 
+    list.innerHTML = Object.keys(DB).map(cat =>
         '<div class="category-item"><input type="checkbox" id="cat-' + cat + '" value="' + cat + '" checked><label for="cat-' + cat + '">' + cat + '</label></div>'
     ).join('');
 }
@@ -285,14 +295,11 @@ function createPlayersSidebar() {
 function updateRolePlayersList() {
     const list = document.getElementById('role-players-list');
     if (!list) return;
-    
     const allPlayerIds = G.activePlayers.length > 0 ? G.activePlayers : Object.keys(G.players);
-    
     list.innerHTML = allPlayerIds.map(id => {
         const p = G.players[id];
         const isEliminated = G.eliminated.includes(id);
         const isMe = id === G.myId;
-        
         return '<div class="role-player-item' + (isEliminated ? ' eliminated' : '') + (isMe ? ' is-me' : '') + '">' +
             '<div class="role-player-avatar">' + renderHexAvatar(id, 32) + '</div>' +
             '<span class="role-player-name">' + (p?.name || id.substring(0, 8)) + (isMe ? ' (Tú)' : '') + '</span>' +
@@ -304,7 +311,6 @@ function updatePlayersSidebar() {
     const list = document.getElementById('sidebar-players-list');
     const sidebar = document.getElementById('players-sidebar');
     if (!list || !sidebar) return;
-    
     const allPlayerIds = Object.keys(G.players);
     list.innerHTML = allPlayerIds.map(id => {
         const p = G.players[id];
@@ -396,7 +402,6 @@ function showScreen(id) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
     const screen = document.getElementById(id);
     if (screen) screen.classList.add('active');
-    
     if (id === 'screen-voting') {
         showPlayersSidebar();
     } else {
@@ -414,12 +419,13 @@ function showConfig() {
     showScreen('screen-config');
 }
 
+// ── Room Creation / Join ─────────────────────────────────────────
+
 function createRoom() {
+    G.playerName = document.getElementById('input-name')?.value.trim() || '';
+    if (!G.playerName) { toast('Ingresa tu nombre', 'error'); return; }
     updateSelectedCategories();
-    if (G.selectedCategories.length === 0) {
-        toast('Selecciona categorías', 'error');
-        return;
-    }
+    if (G.selectedCategories.length === 0) { toast('Selecciona categorías', 'error'); return; }
     G.isHost = true;
     G.hostId = G.myId;
     G.maxPlayers = Math.min(parseInt(document.getElementById('config-max-players')?.value) || 10, 10);
@@ -429,25 +435,20 @@ function createRoom() {
     G.usedWords = [];
     G.isFirstRound = true;
     G.gamePhase = 'lobby';
-    initPubNub();
+    saveProfile();
+    initFirebase();
 }
 
 function joinRoom() {
     G.playerName = document.getElementById('input-name')?.value.trim() || '';
-    if (!G.playerName) {
-        toast('Ingresa tu nombre', 'error');
-        return;
-    }
+    if (!G.playerName) { toast('Ingresa tu nombre', 'error'); return; }
     const code = (document.getElementById('input-join-code')?.value || '').toUpperCase().trim();
-    if (code.length !== 4) {
-        toast('Código de 4 letras', 'error');
-        return;
-    }
+    if (code.length !== 4) { toast('Código de 4 letras', 'error'); return; }
     saveProfile();
     G.isHost = false;
     G.channel = code;
     G.gamePhase = 'lobby';
-    initPubNub();
+    initFirebase();
 }
 
 function generateCode() {
@@ -457,471 +458,633 @@ function generateCode() {
     return code;
 }
 
-function initPubNub() {
+// ── Firebase Init & Listeners ─────────────────────────────────────
+
+function initFirebase() {
     clearAllTimers();
-    if (G.pubnub) {
-        G.pubnub.unsubscribeAll();
-        G.pubnub = null;
+    cleanupListeners();
+
+    // Initialize Firebase app (guard against double init)
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
     }
-    G.pubnub = new PubNub({
-        publishKey: 'demo',
-        subscribeKey: 'demo',
-        userId: G.myId
+    G.db = firebase.database();
+
+    const roomRef = G.db.ref('rooms/' + G.channel);
+
+    // Write own player presence
+    const myPlayerRef = roomRef.child('players/' + G.myId);
+    myPlayerRef.set({
+        name: G.playerName,
+        avatar: G.avatar,
+        frame: G.frame,
+        online: true
     });
-    G.pubnub.addListener({
-        status: onStatus,
-        message: onMessage,
-        presence: onPresence
-    });
-    G.pubnub.subscribe({
-        channels: [G.channel],
-        withPresence: true
-    });
+    myPlayerRef.onDisconnect().update({ online: false });
+
+    // Attach listeners
+    const stateRef   = roomRef.child('state');
+    const playersRef = roomRef.child('players');
+    const signalRef  = roomRef.child('signals/' + G.myId);
+
+    const stateHandler   = onStateChange;
+    const playersHandler = onPlayersChange;
+    const signalHandler  = onMySignal;
+
+    stateRef.on('value', stateHandler);
+    playersRef.on('value', playersHandler);
+    signalRef.on('value', signalHandler);
+
+    G.dbListeners.push(
+        { ref: stateRef,   event: 'value', fn: stateHandler },
+        { ref: playersRef, event: 'value', fn: playersHandler },
+        { ref: signalRef,  event: 'value', fn: signalHandler }
+    );
+
+    if (G.isHost) {
+        // Host watches raw votes node
+        const votesRef    = roomRef.child('votes');
+        const votesHandler = onVotesChange;
+        votesRef.on('value', votesHandler);
+        G.dbListeners.push({ ref: votesRef, event: 'value', fn: votesHandler });
+
+        // Initialise host room state
+        stateRef.set({
+            hostId: G.myId,
+            hostOnline: true,
+            maxPlayers: G.maxPlayers,
+            roundTime: G.roundTime,
+            gamePhase: 'lobby',
+            usedWords: G.usedWords,
+            scores: {},
+            isFirstRound: true,
+            rolesVersion: 0
+        });
+
+        // Remove host presence on disconnect
+        stateRef.child('hostOnline').onDisconnect().set(false);
+    }
+
+    // Show lobby immediately
+    document.getElementById('display-room-code').textContent = G.channel;
+    showScreen('screen-lobby');
+    generateQR();
+    if (G.isHost) {
+        document.getElementById('btn-distribute').style.display = 'block';
+    }
+
+    // Timeout if no state arrives (non-host joining nonexistent room)
+    if (!G.isHost) {
+        setTimeout(function() {
+            if (G.gamePhase === 'lobby' && !G.hostId) {
+                toast('Sala no encontrada', 'error');
+                setTimeout(exitGame, 1500);
+            }
+        }, 6000);
+    }
 }
 
-function onStatus(status) {
-    if (status.category === 'PNConnectedCategory') {
-        setPlayerState();
-        document.getElementById('display-room-code').textContent = G.channel;
-        showScreen('screen-lobby');
-        generateQR();
-        if (G.isHost) {
-            document.getElementById('btn-distribute').style.display = 'block';
-            setTimeout(publishConfig, 300);
-        } else {
-            setTimeout(requestSync, 500);
-        }
-        setTimeout(refreshPlayers, 500);
-        G.refreshInterval = setInterval(refreshPlayers, 3000);
-    } else if (status.error) {
-        toast('Error de conexión', 'error');
-    }
+function cleanupListeners() {
+    G.dbListeners.forEach(function(l) { l.ref.off(l.event, l.fn); });
+    G.dbListeners = [];
 }
 
-function onMessage(event) {
-    const msg = event.message;
-    const sender = event.publisher;
-    switch (msg.type) {
-        case 'config':
-            G.maxPlayers = Math.min(msg.maxPlayers, 10);
-            G.roundTime = msg.roundTime;
-            G.hostId = msg.hostId;
-            G.isHost = (G.myId === G.hostId);
-            if (msg.usedWords) G.usedWords = msg.usedWords;
-            if (msg.scores) G.scores = msg.scores;
-            renderPlayerList();
-            break;
-        case 'player_state':
-            const currentCount = Object.keys(G.players).length;
-            const isNewPlayer = !G.players[sender];
-            if (isNewPlayer && currentCount >= G.maxPlayers && sender !== G.myId) {
-                if (G.isHost) {
-                    G.pubnub.publish({ channel: G.channel, message: { type: 'room_full', targetId: sender } });
+// ── Helper: Firebase arrays ──────────────────────────────────────
+// Firebase can return arrays as {0:v, 1:v} objects if keys were set as integers
+function arrayFromFirebase(val) {
+    if (!val) return [];
+    if (Array.isArray(val)) return val;
+    // Object with numeric-ish keys → values
+    return Object.values(val);
+}
+
+// ── Main State Listener ──────────────────────────────────────────
+
+function onStateChange(snapshot) {
+    const state = snapshot.val();
+    if (!state) return; // Room not yet initialised
+
+    const newPhase = state.gamePhase || 'lobby';
+    const prevPhase = G.prevPhase;
+
+    // Sync config
+    G.hostId     = state.hostId;
+    G.isHost     = (G.myId === G.hostId);
+    G.maxPlayers = Math.min(state.maxPlayers || 10, 10);
+    G.roundTime  = state.roundTime || 60;
+    G.usedWords  = arrayFromFirebase(state.usedWords);
+    G.scores     = state.scores || {};
+
+    // Host disconnect detection
+    if (state.hostOnline === false && !G.isHost && G.gamePhase !== 'home') {
+        toast('Host desconectado', 'error');
+        setTimeout(exitGame, 2000);
+        return;
+    }
+
+    // Handle phase transitions
+    if (newPhase !== prevPhase) {
+        G.prevPhase  = newPhase;
+        G.gamePhase  = newPhase;
+
+        // Sync role/game arrays on any phase change
+        G.isFirstRound  = state.isFirstRound !== false;
+        G.activePlayers = arrayFromFirebase(state.activePlayers);
+        G.eliminated    = arrayFromFirebase(state.eliminated);
+        G.impostors     = arrayFromFirebase(state.impostors);
+        G.charlatans    = arrayFromFirebase(state.charlatans);
+        G.citizens      = arrayFromFirebase(state.citizens);
+        G.fullRoles     = state.roles || {};
+        G.starterPlayerId = state.starterPlayerId || null;
+        if (G.isHost && state.trueRoles) G.trueRoles = state.trueRoles;
+
+        switch (newPhase) {
+            case 'lobby':
+                if (prevPhase !== null) {
+                    handleBackToLobbyFromState(state);
+                } else {
+                    // First arrival — show lobby
+                    document.getElementById('display-room-code').textContent = G.channel;
+                    renderPlayerList();
                 }
-                return;
-            }
-            if (isNewPlayer && currentCount >= G.maxPlayers) {
-                return;
-            }
-            G.players[sender] = { name: msg.name, avatar: msg.avatar, frame: msg.frame };
-            if (G.scores[sender] === undefined) G.scores[sender] = 0;
-            renderPlayerList();
-            break;
-        case 'room_full':
-            if (msg.targetId === G.myId) {
-                toast('Sala llena', 'error');
-                setTimeout(exitGame, 1500);
-            }
-            break;
-        case 'assign':
-            handleAssign(msg);
-            break;
-        case 'start_round':
-            handleStartRound(msg);
-            break;
-        case 'vote':
-            handleVote(sender, msg.target);
-            break;
-        case 'vote_update':
-            G.votes = msg.votes;
-            G.votedPlayers = new Set(msg.voted);
-            if (G.isSpectator) updateSpectatorVotes();
-            break;
-        case 'results':
-            showResults(msg);
-            break;
-        case 'next_round':
-            handleNextRound(msg);
-            break;
-        case 'back_to_lobby':
-            handleBackToLobby(msg);
-            break;
-        case 'game_over':
-            handleGameOver(msg);
-            break;
-        case 'spectator_roles':
-            if (G.isSpectator) {
-                G.fullRoles = msg.roles;
-                G.activePlayers = msg.activePlayers || G.activePlayers;
-                updateSpectatorRoles();
-            }
-            break;
-        case 'host_disconnect':
-            toast('Host desconectado', 'error');
-            setTimeout(exitGame, 2000);
-            break;
-        case 'kick_player':
-            if (msg.targetId === G.myId) {
-                toast('Fuiste expulsado', 'error');
-                setTimeout(exitGame, 1500);
-            } else {
-                delete G.players[msg.targetId];
-                delete G.scores[msg.targetId];
-                renderPlayerList();
-            }
-            break;
-        case 'skip_word':
-            handleSkipWord(msg);
-            break;
-        case 'request_sync':
-            if (G.isHost) publishFullSync();
-            break;
-        case 'full_sync':
-            handleFullSync(msg);
-            break;
-    }
-}
-
-function onPresence(event) {
-    if (event.action === 'join' && G.isHost && event.uuid !== G.myId) {
-        setTimeout(publishConfig, 500);
-    }
-    if (event.action === 'leave' || event.action === 'timeout') {
-        if (G.gamePhase === 'lobby' || G.gamePhase === 'home') {
-            delete G.players[event.uuid];
-        } else {
-            G.activePlayers = G.activePlayers.filter(id => id !== event.uuid);
-            if (!G.eliminated.includes(event.uuid)) G.eliminated.push(event.uuid);
+                break;
+            case 'roles':
+                G.rolesVersion = state.rolesVersion || 0;
+                if (prevPhase === 'lobby' || prevPhase === null) {
+                    handleAssignFromState(state);
+                } else {
+                    handleNextRoundFromState(state);
+                }
+                break;
+            case 'round':
+                handleStartRoundFromState(state);
+                break;
+            case 'voting':
+                // Reset local vote state and show voting screen
+                G.votes       = state.votes || {};
+                G.votedPlayers = new Set(arrayFromFirebase(state.votedPlayers));
+                G.voteTargets  = state.voteTargets || {};
+                startVoting();
+                break;
+            case 'results':
+                showResults(state.results || {});
+                break;
+            case 'gameover':
+                handleGameOver(state.gameOver || {});
+                break;
         }
         renderPlayerList();
         updatePlayersSidebar();
+        return;
     }
-    setTimeout(refreshPlayers, 500);
+
+    // Same phase — check for within-phase updates
+    if (newPhase === 'roles') {
+        const newRolesVersion = state.rolesVersion || 0;
+        if (newRolesVersion !== G.rolesVersion) {
+            // Roles changed without phase change → skip_word
+            G.rolesVersion  = newRolesVersion;
+            G.fullRoles     = state.roles || {};
+            G.starterPlayerId = state.starterPlayerId || null;
+            G.usedWords     = arrayFromFirebase(state.usedWords);
+            if (G.isHost && state.trueRoles) G.trueRoles = state.trueRoles;
+            handleSkipWordFromState(state);
+        }
+    } else if (newPhase === 'voting') {
+        // Vote-progress broadcast from host
+        G.votes       = state.votes || {};
+        G.votedPlayers = new Set(arrayFromFirebase(state.votedPlayers));
+        G.voteTargets  = state.voteTargets || {};
+        if (G.isSpectator) updateSpectatorVotes();
+        // Disable vote buttons for players who have already voted
+        if (G.votedPlayers.has(G.myId)) {
+            document.querySelectorAll('.btn-vote').forEach(btn => btn.disabled = true);
+            const statusEl = document.getElementById('vote-status');
+            if (statusEl) statusEl.textContent = 'Voto registrado. Esperando...';
+        }
+    } else if (newPhase === 'lobby') {
+        // Config update in lobby
+        renderPlayerList();
+    }
+
+    updatePlayersSidebar();
 }
 
-function setPlayerState() {
-    if (!G.pubnub) return;
-    G.pubnub.setState({
-        state: { name: G.playerName, avatar: G.avatar, frame: G.frame },
-        channels: [G.channel]
+// ── Players Listener ─────────────────────────────────────────────
+
+function onPlayersChange(snapshot) {
+    const playersData = snapshot.val() || {};
+    const newIds = Object.keys(playersData);
+
+    if (G.gamePhase === 'lobby' || G.gamePhase === 'home') {
+        // In lobby: check room-full for new joiners (host only)
+        if (G.isHost) {
+            newIds.forEach(function(id) {
+                if (id !== G.myId && !G.players[id]) {
+                    const currentCount = Object.keys(G.players).filter(pid => G.players[pid]).length;
+                    if (currentCount >= G.maxPlayers) {
+                        G.db.ref('rooms/' + G.channel + '/signals/' + id).set({
+                            type: 'room_full',
+                            ts: firebase.database.ServerValue.TIMESTAMP
+                        });
+                    }
+                }
+            });
+        }
+        // Remove players who have gone offline in lobby
+        Object.keys(G.players).forEach(function(id) {
+            if (!newIds.includes(id) || playersData[id]?.online === false) {
+                delete G.players[id];
+            }
+        });
+    }
+
+    // Update player data from Firebase
+    newIds.forEach(function(id) {
+        const p = playersData[id];
+        if (!p) return;
+        if (p.online === false) {
+            // Player went offline during game → eliminate
+            if (G.gamePhase !== 'lobby' && G.gamePhase !== 'home' && G.gamePhase !== 'gameover') {
+                G.activePlayers = G.activePlayers.filter(function(pid) { return pid !== id; });
+                if (!G.eliminated.includes(id)) G.eliminated.push(id);
+            } else {
+                delete G.players[id];
+            }
+            return;
+        }
+        G.players[id] = {
+            name:   p.name   || id.substring(0, 8),
+            avatar: p.avatar || 'avatar-01',
+            frame:  p.frame  || 'fr-none'
+        };
+        if (G.scores[id] === undefined) G.scores[id] = 0;
     });
-    G.pubnub.publish({
-        channel: G.channel,
-        message: { type: 'player_state', name: G.playerName, avatar: G.avatar, frame: G.frame }
+
+    renderPlayerList();
+    updatePlayersSidebar();
+}
+
+// ── Personal Signal Listener ─────────────────────────────────────
+
+function onMySignal(snapshot) {
+    const signal = snapshot.val();
+    if (!signal) return;
+    switch (signal.type) {
+        case 'room_full':
+            toast('Sala llena', 'error');
+            setTimeout(exitGame, 1500);
+            break;
+        case 'kicked':
+            toast('Fuiste expulsado', 'error');
+            setTimeout(exitGame, 1500);
+            break;
+        case 'host_left':
+            toast('Host desconectado', 'error');
+            setTimeout(exitGame, 2000);
+            break;
+    }
+    // Clear after processing
+    if (G.db && G.channel) {
+        G.db.ref('rooms/' + G.channel + '/signals/' + G.myId).remove();
+    }
+}
+
+// ── Votes Listener (host only) ───────────────────────────────────
+
+function onVotesChange(snapshot) {
+    if (!G.isHost || G.gamePhase !== 'voting') return;
+    const rawVotes = snapshot.val() || {};
+
+    Object.entries(rawVotes).forEach(function([voterId, targetId]) {
+        if (
+            !G.votedPlayers.has(voterId) &&
+            voterId !== targetId &&
+            G.activePlayers.includes(voterId) &&
+            G.activePlayers.includes(targetId) &&
+            !G.eliminated.includes(targetId)
+        ) {
+            G.votes[targetId] = (G.votes[targetId] || 0) + 1;
+            G.votedPlayers.add(voterId);
+            G.voteTargets[voterId] = targetId;
+        }
+    });
+
+    // Broadcast vote progress to all clients
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        votes:        G.votes,
+        votedPlayers: Array.from(G.votedPlayers),
+        voteTargets:  G.voteTargets
+    });
+
+    // All voted → publish results early
+    if (G.votedPlayers.size >= G.activePlayers.length && !G.resultsPublished) {
+        if (G.voteTimeout) clearTimeout(G.voteTimeout);
+        G.voteTimeout = setTimeout(function() {
+            if (!G.resultsPublished) publishResults();
+        }, 500);
+    }
+
+    if (G.isSpectator) updateSpectatorVotes();
+}
+
+// ── State-to-handler bridges ─────────────────────────────────────
+
+function handleAssignFromState(state) {
+    const msg = {
+        activePlayers: arrayFromFirebase(state.activePlayers),
+        impostors:     arrayFromFirebase(state.impostors),
+        charlatans:    arrayFromFirebase(state.charlatans),
+        citizens:      arrayFromFirebase(state.citizens),
+        roles:         state.roles || {},
+        hostId:        state.hostId,
+        starterPlayerId: state.starterPlayerId,
+        usedWords:     arrayFromFirebase(state.usedWords),
+        isFirstRound:  state.isFirstRound !== false
+    };
+    handleAssign(msg);
+}
+
+function handleStartRoundFromState(state) {
+    const elapsed = state.roundStartedAt
+        ? Math.round((Date.now() - state.roundStartedAt) / 1000)
+        : 0;
+    const remaining = Math.max((state.roundDuration || G.roundTime) - elapsed, 0);
+    handleStartRound({ starterPlayerId: state.starterPlayerId, time: remaining });
+}
+
+function handleNextRoundFromState(state) {
+    const msg = {
+        activePlayers: arrayFromFirebase(state.activePlayers),
+        fullRoles:     state.roles || {}
+    };
+    handleNextRound(msg);
+}
+
+function handleSkipWordFromState(state) {
+    const msg = {
+        roles:           state.roles || {},
+        starterPlayerId: state.starterPlayerId,
+        usedWords:       arrayFromFirebase(state.usedWords)
+    };
+    handleSkipWord(msg);
+}
+
+function handleBackToLobbyFromState(state) {
+    const msg = {
+        scores:   state.scores || {},
+        hostId:   state.hostId,
+        usedWords: arrayFromFirebase(state.usedWords)
+    };
+    handleBackToLobby(msg);
+}
+
+// ── Player State / Config Helpers ────────────────────────────────
+
+function setPlayerState() {
+    if (!G.db || !G.channel) return;
+    G.db.ref('rooms/' + G.channel + '/players/' + G.myId).update({
+        name:   G.playerName,
+        avatar: G.avatar,
+        frame:  G.frame,
+        online: true
     });
 }
 
 function publishConfig() {
-    if (!G.pubnub || !G.isHost) return;
-    G.pubnub.publish({
-        channel: G.channel,
-        message: {
-            type: 'config',
-            maxPlayers: G.maxPlayers,
-            roundTime: G.roundTime,
-            hostId: G.hostId,
-            usedWords: G.usedWords,
-            scores: G.scores
-        }
+    if (!G.db || !G.isHost) return;
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        maxPlayers: G.maxPlayers,
+        roundTime:  G.roundTime,
+        hostId:     G.hostId,
+        usedWords:  G.usedWords,
+        scores:     G.scores
     });
 }
 
-function requestSync() {
-    if (!G.pubnub || G.isHost) return;
-    G.pubnub.publish({
-        channel: G.channel,
-        message: { type: 'request_sync' }
-    });
-}
-
-function publishFullSync() {
-    if (!G.pubnub || !G.isHost) return;
-    G.pubnub.publish({
-        channel: G.channel,
-        message: {
-            type: 'full_sync',
-            maxPlayers: G.maxPlayers,
-            roundTime: G.roundTime,
-            hostId: G.hostId,
-            usedWords: G.usedWords,
-            scores: G.scores,
-            gamePhase: G.gamePhase,
-            activePlayers: G.activePlayers,
-            eliminated: G.eliminated,
-            fullRoles: G.fullRoles,
-            impostors: G.impostors,
-            charlatans: G.charlatans,
-            citizens: G.citizens
-        }
-    });
-}
-
-function handleFullSync(msg) {
-    if (G.isHost) return;
-    G.maxPlayers = Math.min(msg.maxPlayers || 10, 10);
-    G.roundTime = msg.roundTime || 60;
-    G.hostId = msg.hostId;
-    G.isHost = (G.myId === G.hostId);
-    G.usedWords = msg.usedWords || [];
-    G.scores = msg.scores || {};
-    if (msg.gamePhase && msg.gamePhase !== 'lobby') {
-        G.gamePhase = msg.gamePhase;
-        G.activePlayers = msg.activePlayers || [];
-        G.eliminated = msg.eliminated || [];
-        G.fullRoles = msg.fullRoles || {};
-        G.impostors = msg.impostors || [];
-        G.charlatans = msg.charlatans || [];
-        G.citizens = msg.citizens || [];
-        if (G.eliminated.includes(G.myId)) G.isSpectator = true;
-        if (G.fullRoles[G.myId]) G.myRole = G.fullRoles[G.myId];
-    }
-    renderPlayerList();
-}
+// ── QR Code ──────────────────────────────────────────────────────
 
 function generateQR() {
     const container = document.getElementById('qr-container');
     if (!container || typeof qrcode === 'undefined') return;
     const qr = qrcode(0, 'M');
-    qr.addData('https://crissarroyo.github.io/infiltra/game.html?code=' + G.channel);
+    // Dynamic URL — works on GitHub Pages, local dev, staging, etc.
+    const baseUrl = window.location.href.split('?')[0];
+    qr.addData(baseUrl + '?code=' + G.channel);
     qr.make();
-    container.innerHTML = qr.createImgTag(4) + 
+    container.innerHTML = qr.createImgTag(4) +
         '<div class="qr-instructions"><strong>Comparte el código de arriba</strong>para que tus amigos se unan</div>';
 }
 
-function refreshPlayers() {
-    if (!G.pubnub) return;
-    G.pubnub.hereNow({
-        channels: [G.channel],
-        includeState: true
-    }, function(status, response) {
-        if (response && response.channels && response.channels[G.channel]) {
-            const occupants = response.channels[G.channel].occupants;
-            const currentIds = occupants.map(o => o.uuid);
-            Object.keys(G.players).forEach(id => {
-                if (!currentIds.includes(id)) delete G.players[id];
-            });
-            occupants.forEach(o => {
-                if (!G.players[o.uuid]) {
-                    G.players[o.uuid] = {
-                        name: o.state?.name || o.uuid.substring(0, 8),
-                        avatar: o.state?.avatar || 'avatar-01',
-                        frame: o.state?.frame || 'fr-none'
-                    };
-                } else if (o.state) {
-                    G.players[o.uuid].name = o.state.name || G.players[o.uuid].name;
-                    G.players[o.uuid].avatar = o.state.avatar || G.players[o.uuid].avatar;
-                    G.players[o.uuid].frame = o.state.frame || G.players[o.uuid].frame;
-                }
-                if (G.scores[o.uuid] === undefined) G.scores[o.uuid] = 0;
-            });
-            renderPlayerList();
-        }
-    });
-}
+// ── Avatar Rendering ─────────────────────────────────────────────
 
-// Función para renderizar avatar hexagonal con marco
 function renderHexAvatar(playerId, size) {
     size = size || 40;
     const p = G.players[playerId];
     const avatar = AVATARS.find(a => a.id === p?.avatar) || AVATARS[0];
-    const frame = FRAMES.find(f => f.id === p?.frame);
-    const hasFrame = frame && frame.color !== 'transparent';
+    const frame  = FRAMES.find(f => f.id === p?.frame);
+    const hasFrame  = frame && frame.color !== 'transparent';
     const frameColor = hasFrame ? frame.color : 'transparent';
-    
     return '<div class="hex-avatar-container" style="width:' + size + 'px;height:' + (size * 1.15) + 'px;--frame-color:' + frameColor + '">' +
         '<img src="' + avatar.image + '" alt="" class="hex-avatar-img">' +
         (hasFrame ? '<div class="hex-avatar-frame"></div>' : '') +
         '</div>';
 }
 
-// Mantener compatibilidad con renderPlayerAvatar pero usando hexagonal
 function renderPlayerAvatar(playerId, size) {
     return renderHexAvatar(playerId, size);
 }
 
 function renderPlayerList() {
-    const list = document.getElementById('player-list');
+    const list    = document.getElementById('player-list');
     const countEl = document.getElementById('player-count');
     if (!list) return;
-    
+
     const playerIds = Object.keys(G.players).sort((a, b) => (G.scores[b] || 0) - (G.scores[a] || 0));
-    
     if (countEl) countEl.textContent = playerIds.length + '/' + G.maxPlayers;
-    
+
     let headerHtml = '<div class="player-list-score-header"><span>Jugador</span><span>Puntos</span></div>';
-    
-    list.innerHTML = headerHtml + playerIds.map((id, index) => {
+    list.innerHTML = headerHtml + playerIds.map(function(id, index) {
         const p = G.players[id];
-        const isMe = id === G.myId;
+        const isMe         = id === G.myId;
         const isHostPlayer = id === G.hostId;
-        const score = G.scores[id] || 0;
-        
+        const score        = G.scores[id] || 0;
+
         let rankHtml = '';
-        if (index === 0) rankHtml = '<div class="player-rank"><img src="' + ICONS.medalGold + '" alt="1"></div>';
+        if (index === 0) rankHtml = '<div class="player-rank"><img src="' + ICONS.medalGold   + '" alt="1"></div>';
         else if (index === 1) rankHtml = '<div class="player-rank"><img src="' + ICONS.medalSilver + '" alt="2"></div>';
         else if (index === 2) rankHtml = '<div class="player-rank"><img src="' + ICONS.medalBronze + '" alt="3"></div>';
         else rankHtml = '<div class="player-rank"><span class="player-rank-number">' + (index + 1) + '</span></div>';
-        
-        const kickBtn = (G.isHost && !isMe && (G.gamePhase === 'lobby' || G.gamePhase === 'home')) ?
-            '<button class="btn-kick" onclick="kickPlayer(\'' + id + '\')" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>' : '';
-        
+
+        const kickBtn = (G.isHost && !isMe && (G.gamePhase === 'lobby' || G.gamePhase === 'home'))
+            ? '<button class="btn-kick" onclick="kickPlayer(\'' + id + '\')" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>'
+            : '';
+
         return '<div class="player-item">' + rankHtml +
             '<div class="player-avatar">' + renderHexAvatar(id, 40) + '</div>' +
             '<div class="player-info"><div class="player-name">' + p.name + (isMe ? ' (Tú)' : '') + '</div>' +
             (isHostPlayer ? '<div class="player-tag">Host</div>' : '') + '</div>' +
             '<div class="player-score">' + score + '</div>' + kickBtn + '</div>';
     }).join('');
-    
+
     const btnDistribute = document.getElementById('btn-distribute');
     if (btnDistribute) btnDistribute.style.display = G.isHost ? 'block' : 'none';
 }
 
 function kickPlayer(playerId) {
-    if (!G.isHost || !G.pubnub) return;
+    if (!G.isHost || !G.db) return;
     const playerName = G.players[playerId]?.name || 'Jugador';
     if (confirm('¿Expulsar a ' + playerName + '?')) {
         delete G.players[playerId];
         delete G.scores[playerId];
         renderPlayerList();
-        G.pubnub.publish({
-            channel: G.channel,
-            message: { type: 'kick_player', targetId: playerId, targetName: playerName }
+        // Send signal to player
+        G.db.ref('rooms/' + G.channel + '/signals/' + playerId).set({
+            type: 'kicked',
+            ts:   firebase.database.ServerValue.TIMESTAMP
         });
+        // Mark offline in players node
+        G.db.ref('rooms/' + G.channel + '/players/' + playerId).update({ online: false });
+        // Update scores in state
+        G.db.ref('rooms/' + G.channel + '/state').update({ scores: G.scores });
     }
 }
 window.kickPlayer = kickPlayer;
 
+// ── Word Selection ───────────────────────────────────────────────
+
 function selectNewWord() {
     updateSelectedCategories();
     let availableWords = [];
-    G.selectedCategories.forEach(cat => {
-        DB[cat].forEach(word => {
+    G.selectedCategories.forEach(function(cat) {
+        DB[cat].forEach(function(word) {
             if (!G.usedWords.includes(word)) availableWords.push({ category: cat, word: word });
         });
     });
     if (availableWords.length < 2) {
         G.usedWords = [];
         availableWords = [];
-        G.selectedCategories.forEach(cat => {
-            DB[cat].forEach(word => {
-                availableWords.push({ category: cat, word: word });
-            });
+        G.selectedCategories.forEach(function(cat) {
+            DB[cat].forEach(function(word) { availableWords.push({ category: cat, word: word }); });
         });
         toast('Palabras reiniciadas');
     }
-    const secretIdx = Math.floor(Math.random() * availableWords.length);
+    const secretIdx  = Math.floor(Math.random() * availableWords.length);
     const secretData = availableWords[secretIdx];
-    G.currentCategory = secretData.category;
+    G.currentCategory   = secretData.category;
     G.currentSecretWord = secretData.word;
     G.usedWords.push(G.currentSecretWord);
-    const fakeOptions = availableWords.filter(w => w.word !== G.currentSecretWord);
-    G.currentFakeWord = fakeOptions.length > 0 ? fakeOptions[Math.floor(Math.random() * fakeOptions.length)].word : '???';
+
+    // FIX: fake word must be from the SAME category as the secret word
+    const sameCatOptions = availableWords.filter(function(w) {
+        return w.word !== G.currentSecretWord && w.category === G.currentCategory;
+    });
+    G.currentFakeWord = sameCatOptions.length > 0
+        ? sameCatOptions[Math.floor(Math.random() * sameCatOptions.length)].word
+        : '???';
     if (G.currentFakeWord !== '???') G.usedWords.push(G.currentFakeWord);
+
     return { category: G.currentCategory, secretWord: G.currentSecretWord, fakeWord: G.currentFakeWord };
 }
 
+// ── Role Distribution ────────────────────────────────────────────
+
 function distributeRoles() {
-    if (!G.pubnub) return;
+    if (!G.db) return;
     const playerIds = Object.keys(G.players);
-    if (playerIds.length < 3) {
-        toast('Mínimo 3 jugadores', 'error');
-        return;
-    }
-    const numImp = Math.min(parseInt(document.getElementById('config-impostors')?.value) || 1, Math.floor(playerIds.length / 2));
+    if (playerIds.length < 3) { toast('Mínimo 3 jugadores', 'error'); return; }
+
+    const numImp  = Math.min(parseInt(document.getElementById('config-impostors')?.value)  || 1, Math.floor(playerIds.length / 2));
     const numChar = Math.min(parseInt(document.getElementById('config-charlatans')?.value) || 0, playerIds.length - numImp - 1);
     updateSelectedCategories();
-    if (G.selectedCategories.length === 0) {
-        toast('Selecciona categorías', 'error');
-        return;
-    }
+    if (G.selectedCategories.length === 0) { toast('Selecciona categorías', 'error'); return; }
+
     const wordData = selectNewWord();
     let roles = {};
-    let pool = [...playerIds];
-    G.impostors = [];
+    let pool  = [...playerIds];
+    G.impostors  = [];
     G.charlatans = [];
-    G.citizens = [];
+    G.citizens   = [];
+    G.trueRoles  = {};
+
+    // Assign impostors
     for (let i = 0; i < numImp && pool.length; i++) {
         const idx = Math.floor(Math.random() * pool.length);
-        const id = pool.splice(idx, 1)[0];
+        const id  = pool.splice(idx, 1)[0];
         roles[id] = { role: 'INFILTRADO', icon: ICONS.impostor, word: 'Categoría: ' + wordData.category };
         G.trueRoles[id] = 'INFILTRADO';
         G.impostors.push(id);
     }
+    // Assign charlatans — FIX: give them the FAKE word (same category), not the secret word
     for (let i = 0; i < numChar && pool.length; i++) {
         const idx = Math.floor(Math.random() * pool.length);
-        const id = pool.splice(idx, 1)[0];
-        roles[id] = { role: 'CIUDADANO', icon: ICONS.citizen, word: wordData.secretWord };
+        const id  = pool.splice(idx, 1)[0];
+        roles[id] = { role: 'CIUDADANO', icon: ICONS.citizen, word: wordData.fakeWord };
         G.trueRoles[id] = 'CHARLATÁN';
         G.charlatans.push(id);
     }
-    pool.forEach(id => {
+    // Assign citizens
+    pool.forEach(function(id) {
         roles[id] = { role: 'CIUDADANO', icon: ICONS.citizen, word: wordData.secretWord };
         G.trueRoles[id] = 'CIUDADANO';
         G.citizens.push(id);
     });
-    G.activePlayers = [...playerIds];
-    G.eliminated = [];
-    G.fullRoles = roles;
-    G.gamePhase = 'roles';
-    G.isFirstRound = true;
+
+    G.activePlayers  = [...playerIds];
+    G.eliminated     = [];
+    G.fullRoles      = roles;
+    G.gamePhase      = 'roles';
+    G.isFirstRound   = true;
+    G.rolesVersion   = (G.rolesVersion || 0) + 1;
     G.starterPlayerId = G.activePlayers[Math.floor(Math.random() * G.activePlayers.length)];
-    G.pubnub.publish({
-        channel: G.channel,
-        message: {
-            type: 'assign',
-            roles: roles,
-            activePlayers: G.activePlayers,
-            impostors: G.impostors,
-            charlatans: G.charlatans,
-            citizens: G.citizens,
-            hostId: G.hostId,
-            starterPlayerId: G.starterPlayerId,
-            usedWords: G.usedWords,
-            isFirstRound: true
-        }
+
+    // Write to Firebase — all clients react via onStateChange
+    G.db.ref('rooms/' + G.channel + '/votes').remove();
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        gamePhase:     'roles',
+        activePlayers: G.activePlayers,
+        eliminated:    [],
+        impostors:     G.impostors,
+        charlatans:    G.charlatans,
+        citizens:      G.citizens,
+        roles:         roles,
+        trueRoles:     G.trueRoles,
+        starterPlayerId: G.starterPlayerId,
+        usedWords:     G.usedWords,
+        isFirstRound:  true,
+        rolesVersion:  G.rolesVersion
     });
 }
 
 function skipWord() {
-    if (!G.isHost || !G.pubnub) return;
+    if (!G.isHost || !G.db) return;
     const wordData = selectNewWord();
-    Object.keys(G.fullRoles).forEach(id => {
-        const role = G.fullRoles[id];
-        if (role.role === 'CIUDADANO') role.word = wordData.secretWord;
-        else if (role.role === 'CHARLATÁN') role.word = wordData.fakeWord;
-        else role.word = 'Categoría: ' + wordData.category;
+    // FIX: use G.trueRoles to correctly assign words to charlatans
+    Object.keys(G.fullRoles).forEach(function(id) {
+        const trueRole = G.trueRoles[id];
+        if (trueRole === 'INFILTRADO') {
+            G.fullRoles[id].word = 'Categoría: ' + wordData.category;
+        } else if (trueRole === 'CHARLATÁN') {
+            G.fullRoles[id].word = wordData.fakeWord;
+        } else {
+            G.fullRoles[id].word = wordData.secretWord;
+        }
     });
     G.starterPlayerId = G.activePlayers[Math.floor(Math.random() * G.activePlayers.length)];
-    G.pubnub.publish({
-        channel: G.channel,
-        message: {
-            type: 'skip_word',
-            roles: G.fullRoles,
-            activePlayers: G.activePlayers,
-            impostors: G.impostors,
-            charlatans: G.charlatans,
-            citizens: G.citizens,
-            hostId: G.hostId,
-            starterPlayerId: G.starterPlayerId,
-            usedWords: G.usedWords
-        }
+    G.rolesVersion    = (G.rolesVersion || 0) + 1;
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        roles:           G.fullRoles,
+        trueRoles:       G.trueRoles,
+        starterPlayerId: G.starterPlayerId,
+        usedWords:       G.usedWords,
+        rolesVersion:    G.rolesVersion
     });
 }
 
 function handleSkipWord(msg) {
-    G.fullRoles = msg.roles;
+    G.fullRoles      = msg.roles;
     G.starterPlayerId = msg.starterPlayerId;
-    G.usedWords = msg.usedWords || G.usedWords;
+    G.usedWords      = msg.usedWords || G.usedWords;
     if (G.fullRoles[G.myId]) G.myRole = G.fullRoles[G.myId];
     G.roleRevealed = false;
     const card = document.getElementById('role-card');
@@ -939,46 +1102,51 @@ function handleSkipWord(msg) {
 }
 
 function handleAssign(msg) {
-    G.activePlayers = msg.activePlayers;
-    G.impostors = msg.impostors;
-    G.charlatans = msg.charlatans;
-    G.citizens = msg.citizens;
-    G.fullRoles = msg.roles;
-    G.hostId = msg.hostId || G.hostId;
-    G.isHost = (G.myId === G.hostId);
+    G.activePlayers  = msg.activePlayers;
+    G.impostors      = msg.impostors;
+    G.charlatans     = msg.charlatans;
+    G.citizens       = msg.citizens;
+    G.fullRoles      = msg.roles;
+    G.hostId         = msg.hostId || G.hostId;
+    G.isHost         = (G.myId === G.hostId);
     G.starterPlayerId = msg.starterPlayerId;
-    G.usedWords = msg.usedWords || G.usedWords;
-    G.gamePhase = 'roles';
-    G.isSpectator = false;
-    G.isFirstRound = msg.isFirstRound !== false;
+    G.usedWords      = msg.usedWords || G.usedWords;
+    G.gamePhase      = 'roles';
+    G.isSpectator    = false;
+    G.isFirstRound   = msg.isFirstRound !== false;
     if (G.isFirstRound) G.roleRevealed = false;
+
     const myRoleData = msg.roles[G.myId];
     if (!myRoleData) return;
     G.myRole = myRoleData;
-    const card = document.getElementById('role-card');
+
+    const card     = document.getElementById('role-card');
     const roleIcon = document.getElementById('role-icon');
     const roleTitle = document.getElementById('role-title');
-    const roleWord = document.getElementById('role-word');
-    const roleInst = document.getElementById('role-instruction');
+    const roleWord  = document.getElementById('role-word');
+    const roleInst  = document.getElementById('role-instruction');
     const starterInfo = document.getElementById('starter-info');
-    const btnStart = document.getElementById('btn-start-round');
-    const btnSkip = document.getElementById('btn-skip-word');
+    const btnStart  = document.getElementById('btn-start-round');
+    const btnSkip   = document.getElementById('btn-skip-word');
+
     if (starterInfo) starterInfo.style.display = 'none';
+
     if (G.isFirstRound) {
         if (card) card.className = 'role-card blurred';
         roleIcon.innerHTML = '<img src="' + ICONS.help + '" alt="?" class="role-icon-img">';
         roleTitle.textContent = 'SECRETO';
-        roleWord.textContent = '???';
-        roleInst.textContent = 'Toca la carta para revelar';
+        roleWord.textContent  = '???';
+        roleInst.textContent  = 'Toca la carta para revelar';
     } else {
         G.roleRevealed = true;
         const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
         if (card) card.className = 'role-card ' + roleClass;
         roleIcon.innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
         roleTitle.textContent = G.myRole.role;
-        roleWord.textContent = G.myRole.word;
-        roleInst.textContent = 'Tu rol (ya revelado)';
+        roleWord.textContent  = G.myRole.word;
+        roleInst.textContent  = 'Tu rol (ya revelado)';
     }
+
     document.getElementById('points-box').style.display = 'none';
     document.getElementById('timer').style.display = 'none';
     document.getElementById('wait-message').style.display = 'block';
@@ -990,7 +1158,6 @@ function handleAssign(msg) {
     }
     if (btnSkip) btnSkip.style.display = G.isHost ? 'block' : 'none';
     showScreen('screen-role');
-    clearInterval(G.refreshInterval);
     updatePlayersSidebar();
     updateRolePlayersList();
 }
@@ -1002,7 +1169,7 @@ function revealRole() {
     if (card) card.classList.remove('blurred');
     document.getElementById('role-icon').innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
     document.getElementById('role-title').textContent = G.myRole.role;
-    document.getElementById('role-word').textContent = G.myRole.word;
+    document.getElementById('role-word').textContent  = G.myRole.word;
     document.getElementById('role-instruction').textContent = 'Memoriza tu información';
     const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
     if (card) card.classList.add(roleClass);
@@ -1010,51 +1177,52 @@ function revealRole() {
 }
 
 function showPointsReminder() {
-    const box = document.getElementById('points-box');
+    const box  = document.getElementById('points-box');
     const list = document.getElementById('points-list');
     if (!box || !list) return;
     let html = '';
     if (G.myRole.role === 'CIUDADANO') {
-        html = '<li><span class="points-value positive">+' + POINTS.CITIZEN_SURVIVE + '</span> Sobrevivir</li>' +
-               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE + '</span> Votar bien</li>' +
-               '<li><span class="points-value negative">' + POINTS.CITIZEN_WRONG_VOTE + '</span> Votar mal</li>';
+        html = '<li><span class="points-value positive">+' + POINTS.CITIZEN_SURVIVE       + '</span> Sobrevivir</li>' +
+               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE  + '</span> Votar bien</li>' +
+               '<li><span class="points-value negative">'  + POINTS.CITIZEN_WRONG_VOTE    + '</span> Votar mal</li>';
     } else if (G.myRole.role === 'INFILTRADO') {
-        html = '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_WIN + '</span> Ganar</li>' +
+        html = '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_WIN           + '</span> Ganar</li>' +
                '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_SURVIVE_ROUND + '</span> Sobrevivir ronda</li>';
     } else {
-        html = '<li><span class="points-value positive">+' + POINTS.CHARLATAN_SURVIVE + '</span> Sobrevivir</li>' +
-               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE + '</span> Votar bien</li>';
+        html = '<li><span class="points-value positive">+' + POINTS.CHARLATAN_SURVIVE     + '</span> Sobrevivir</li>' +
+               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE  + '</span> Votar bien</li>';
     }
     list.innerHTML = html;
     box.style.display = 'block';
 }
 
+// ── Round Management ─────────────────────────────────────────────
+
 function startRound() {
-    if (!G.pubnub || !G.isHost || G.roundStarting) return;
+    if (!G.db || !G.isHost || G.roundStarting) return;
     G.roundStarting = true;
     const btnStart = document.getElementById('btn-start-round');
-    const btnSkip = document.getElementById('btn-skip-word');
-    if (btnStart) {
-        btnStart.disabled = true;
-        btnStart.textContent = 'Iniciando...';
-    }
-    if (btnSkip) btnSkip.style.display = 'none';
+    const btnSkip  = document.getElementById('btn-skip-word');
+    if (btnStart) { btnStart.disabled = true; btnStart.textContent = 'Iniciando...'; }
+    if (btnSkip)  btnSkip.style.display = 'none';
+
     const newStarter = G.activePlayers[Math.floor(Math.random() * G.activePlayers.length)];
-    G.pubnub.publish({
-        channel: G.channel,
-        message: { type: 'start_round', time: G.roundTime, starterPlayerId: newStarter }
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        gamePhase:      'round',
+        roundStartedAt: firebase.database.ServerValue.TIMESTAMP,
+        roundDuration:  G.roundTime,
+        starterPlayerId: newStarter
     });
-    setTimeout(() => { G.roundStarting = false; }, 2000);
+    setTimeout(function() { G.roundStarting = false; }, 2000);
 }
 
 function showRoundStartOverlay(starterName, starterAvatar, starterFrame) {
     const existing = document.getElementById('round-start-overlay');
     if (existing) existing.remove();
     const avatar = AVATARS.find(a => a.id === starterAvatar) || AVATARS[0];
-    const frame = FRAMES.find(f => f.id === starterFrame);
-    const hasFrame = frame && frame.color !== 'transparent';
+    const frame  = FRAMES.find(f => f.id === starterFrame);
+    const hasFrame  = frame && frame.color !== 'transparent';
     const frameColor = hasFrame ? frame.color : 'transparent';
-    
     const overlay = document.createElement('div');
     overlay.id = 'round-start-overlay';
     overlay.className = 'round-start-overlay';
@@ -1090,17 +1258,16 @@ function hideStarterBanner() {
 function handleStartRound(msg) {
     clearAllTimers();
     G.starterPlayerId = msg.starterPlayerId;
-    G.gamePhase = 'round';
-    G.roundStarting = false;
+    G.gamePhase      = 'round';
+    G.roundStarting  = false;
+
     const btnStart = document.getElementById('btn-start-round');
-    const btnSkip = document.getElementById('btn-skip-word');
-    if (btnStart) {
-        btnStart.style.display = 'none';
-        btnStart.disabled = false;
-        btnStart.textContent = 'Iniciar Ronda';
-    }
-    if (btnSkip) btnSkip.style.display = 'none';
+    const btnSkip  = document.getElementById('btn-skip-word');
+    if (btnStart) { btnStart.style.display = 'none'; btnStart.disabled = false; btnStart.textContent = 'Iniciar Ronda'; }
+    if (btnSkip)  btnSkip.style.display = 'none';
+
     const starterName = G.players[G.starterPlayerId]?.name || 'Alguien';
+
     if (G.isSpectator) {
         const btnSpecNext = document.getElementById('btn-spectator-next');
         if (btnSpecNext) { btnSpecNext.style.display = 'none'; btnSpecNext.disabled = true; }
@@ -1108,6 +1275,7 @@ function handleStartRound(msg) {
         setTimeout(function() { startSpectatorTimer(msg.time); }, ROUND_START_DISPLAY_TIME);
         return;
     }
+
     const starter = G.players[G.starterPlayerId] || {};
     showRoundStartOverlay(starterName, starter.avatar || 'avatar-01', starter.frame || 'fr-none');
     setTimeout(function() {
@@ -1118,10 +1286,10 @@ function handleStartRound(msg) {
 }
 
 function clearAllTimers() {
-    if (G.timerInterval) { clearInterval(G.timerInterval); G.timerInterval = null; }
-    if (G.voteTimerInterval) { clearInterval(G.voteTimerInterval); G.voteTimerInterval = null; }
-    if (G.voteTimeout) { clearTimeout(G.voteTimeout); G.voteTimeout = null; }
-    if (G.spectatorTimerInterval) { clearInterval(G.spectatorTimerInterval); G.spectatorTimerInterval = null; }
+    if (G.timerInterval)         { clearInterval(G.timerInterval);         G.timerInterval         = null; }
+    if (G.voteTimerInterval)     { clearInterval(G.voteTimerInterval);     G.voteTimerInterval     = null; }
+    if (G.voteTimeout)           { clearTimeout(G.voteTimeout);            G.voteTimeout           = null; }
+    if (G.spectatorTimerInterval){ clearInterval(G.spectatorTimerInterval); G.spectatorTimerInterval = null; }
 }
 
 function startTimer(duration) {
@@ -1130,7 +1298,7 @@ function startTimer(duration) {
     timer.style.display = 'block';
     timer.classList.remove('warning');
     document.getElementById('wait-message').style.display = 'none';
-    document.getElementById('points-box').style.display = 'none';
+    document.getElementById('points-box').style.display  = 'none';
     let remaining = duration;
     updateTimerDisplay(remaining);
     G.timerInterval = setInterval(function() {
@@ -1142,7 +1310,17 @@ function startTimer(duration) {
             clearInterval(G.timerInterval);
             timer.textContent = '¡TIEMPO!';
             if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
-            startVoting();
+            // Only HOST transitions to voting in Firebase
+            if (G.isHost) {
+                G.db.ref('rooms/' + G.channel + '/votes').remove();
+                G.db.ref('rooms/' + G.channel + '/state').update({
+                    gamePhase:    'voting',
+                    votes:        {},
+                    votedPlayers: [],
+                    voteTargets:  {}
+                });
+            }
+            // Non-hosts wait for phase change via onStateChange
         }
     }, 1000);
 }
@@ -1159,11 +1337,7 @@ function startSpectatorTimer(duration) {
     updateDisplay();
     G.spectatorTimerInterval = setInterval(function() {
         remaining--;
-        if (remaining < 0) {
-            clearInterval(G.spectatorTimerInterval);
-            specStatus.textContent = 'Votación...';
-            return;
-        }
+        if (remaining < 0) { clearInterval(G.spectatorTimerInterval); specStatus.textContent = 'Votación...'; return; }
         updateDisplay();
     }, 1000);
 }
@@ -1175,6 +1349,8 @@ function updateTimerDisplay(seconds) {
     document.getElementById('timer').textContent = mins.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
 }
 
+// ── Voting ───────────────────────────────────────────────────────
+
 function startVoting() {
     if (G.timerInterval) clearInterval(G.timerInterval);
     hideStarterBanner();
@@ -1183,16 +1359,18 @@ function startVoting() {
         showScreen('screen-spectator');
         return;
     }
-    G.gamePhase = 'voting';
-    G.votes = {};
-    G.votedPlayers = new Set();
-    G.voteTargets = {};
+    G.gamePhase   = 'voting';
+    G.votes       = G.votes || {};       // keep any already-synced votes
+    G.votedPlayers = G.votedPlayers || new Set();
+    G.voteTargets  = G.voteTargets  || {};
     showScreen('screen-voting');
     renderVotingList();
     startVoteTimer(30);
     if (G.isHost) {
         if (G.voteTimeout) clearTimeout(G.voteTimeout);
-        G.voteTimeout = setTimeout(publishResults, 32000);
+        G.voteTimeout = setTimeout(function() {
+            if (!G.resultsPublished) publishResults();
+        }, 32000);
     }
 }
 
@@ -1200,13 +1378,16 @@ function renderVotingList() {
     const list = document.getElementById('voting-list');
     if (!list) return;
     const votable = G.activePlayers.filter(id => id !== G.myId && !G.eliminated.includes(id));
-    list.innerHTML = votable.map(id => 
-        '<div class="vote-item">' +
-        '<div class="vote-avatar">' + renderHexAvatar(id, 48) + '</div>' +
-        '<div class="player-info"><div class="player-name">' + (G.players[id]?.name || id) + '</div></div>' +
-        '<button class="btn-vote" data-target="' + id + '">Votar</button></div>'
-    ).join('');
-    list.querySelectorAll('.btn-vote').forEach(btn => {
+    list.innerHTML = votable.map(function(id) {
+        const alreadyVoted = G.votedPlayers.has(id);
+        return '<div class="vote-item">' +
+            '<div class="vote-avatar">' + renderHexAvatar(id, 48) + '</div>' +
+            '<div class="player-info"><div class="player-name">' + (G.players[id]?.name || id) + '</div></div>' +
+            '<button class="btn-vote' + (alreadyVoted ? ' voted' : '') + '" data-target="' + id + '"' +
+            (alreadyVoted ? ' disabled' : '') + '>' +
+            (alreadyVoted ? 'Votado' : 'Votar') + '</button></div>';
+    }).join('');
+    list.querySelectorAll('.btn-vote').forEach(function(btn) {
         btn.onclick = function() { sendVote(btn.dataset.target, btn); };
     });
 }
@@ -1224,53 +1405,48 @@ function startVoteTimer(seconds) {
 }
 
 function sendVote(targetId, button) {
-    if (!G.pubnub || G.eliminated.includes(targetId) || !G.activePlayers.includes(targetId)) return;
-    G.pubnub.publish({
-        channel: G.channel,
-        message: { type: 'vote', target: targetId }
-    });
+    if (!G.db || G.eliminated.includes(targetId) || !G.activePlayers.includes(targetId)) return;
+    // Each player writes their own vote to Firebase
+    G.db.ref('rooms/' + G.channel + '/votes/' + G.myId).set(targetId);
     button.classList.add('voted');
     button.textContent = 'Votado';
     button.disabled = true;
-    document.querySelectorAll('.btn-vote').forEach(btn => btn.disabled = true);
+    document.querySelectorAll('.btn-vote').forEach(function(btn) { btn.disabled = true; });
     document.getElementById('vote-status').textContent = 'Voto registrado. Esperando...';
 }
 
+// handleVote is called internally by onVotesChange (host only)
 function handleVote(voterId, targetId) {
     if (!G.activePlayers.includes(targetId) || G.eliminated.includes(targetId) ||
-        !G.activePlayers.includes(voterId) || G.votedPlayers.has(voterId) || voterId === targetId) return;
+        !G.activePlayers.includes(voterId)  || G.votedPlayers.has(voterId) || voterId === targetId) return;
     G.votes[targetId] = (G.votes[targetId] || 0) + 1;
     G.votedPlayers.add(voterId);
     G.voteTargets[voterId] = targetId;
-    if (G.isHost && G.pubnub) {
-        G.pubnub.publish({
-            channel: G.channel,
-            message: { type: 'vote_update', votes: G.votes, voted: Array.from(G.votedPlayers) }
-        });
-        if (G.votedPlayers.size >= G.activePlayers.length) {
-            if (G.voteTimeout) clearTimeout(G.voteTimeout);
-            setTimeout(publishResults, 500);
-        }
-    }
-    if (G.isSpectator) updateSpectatorVotes();
 }
 
+// ── Results ──────────────────────────────────────────────────────
+
 function publishResults() {
-    if (!G.pubnub) return;
+    if (!G.isHost || !G.db || G.resultsPublished) return;
+    G.resultsPublished = true;
     clearAllTimers();
-    let maxVotes = 0;
+
+    let maxVotes  = 0;
     let mostVoted = [];
     Object.entries(G.votes).forEach(function([id, count]) {
-        if (count > maxVotes) { maxVotes = count; mostVoted = [id]; }
+        if (count > maxVotes)      { maxVotes = count; mostVoted = [id]; }
         else if (count === maxVotes) mostVoted.push(id);
     });
-    const isTie = mostVoted.length > 1 || maxVotes === 0;
-    let eliminatedId = null;
+
+    const isTie        = mostVoted.length > 1 || maxVotes === 0;
+    let eliminatedId   = null;
     let eliminatedRole = null;
+
     if (!isTie) {
         eliminatedId = mostVoted[0];
         G.eliminated.push(eliminatedId);
         G.activePlayers = G.activePlayers.filter(id => id !== eliminatedId);
+
         if (G.impostors.includes(eliminatedId)) {
             eliminatedRole = 'INFILTRADO';
             G.impostors = G.impostors.filter(id => id !== eliminatedId);
@@ -1281,6 +1457,8 @@ function publishResults() {
             eliminatedRole = 'CIUDADANO';
             G.citizens = G.citizens.filter(id => id !== eliminatedId);
         }
+
+        // Points for voters
         Object.entries(G.voteTargets).forEach(function([voterId, targetId]) {
             if (targetId === eliminatedId) {
                 if (eliminatedRole === 'INFILTRADO') {
@@ -1290,29 +1468,38 @@ function publishResults() {
                 }
             }
         });
-        G.impostors.forEach(id => {
+
+        // Impostors survive-round bonus
+        G.impostors.forEach(function(id) {
             G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_SURVIVE_ROUND;
         });
     }
-    G.pubnub.publish({
-        channel: G.channel,
-        message: {
-            type: 'results',
-            votes: G.votes,
-            eliminatedId: eliminatedId,
-            eliminatedName: eliminatedId ? G.players[eliminatedId]?.name : null,
-            eliminatedRole: eliminatedRole,
-            isTie: isTie,
-            scores: G.scores,
-            activePlayers: G.activePlayers,
-            impostors: G.impostors,
-            fullRoles: G.fullRoles
-        }
+
+    const resultsPayload = {
+        votes:         G.votes,
+        eliminatedId:  eliminatedId,
+        eliminatedName: eliminatedId ? G.players[eliminatedId]?.name : null,
+        eliminatedRole: eliminatedRole,
+        isTie:         isTie,
+        scores:        G.scores,
+        activePlayers: G.activePlayers,
+        impostors:     G.impostors,
+        fullRoles:     G.fullRoles
+    };
+
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        gamePhase:     'results',
+        votes:         G.votes,
+        activePlayers: G.activePlayers,
+        eliminated:    G.eliminated,
+        impostors:     G.impostors,
+        charlatans:    G.charlatans,
+        citizens:      G.citizens,
+        scores:        G.scores,
+        roles:         G.fullRoles,
+        results:       resultsPayload
     });
-    G.pubnub.publish({
-        channel: G.channel,
-        message: { type: 'spectator_roles', roles: G.fullRoles, activePlayers: G.activePlayers }
-    });
+
     setTimeout(checkGameOver, RESULT_DISPLAY_TIME);
 }
 
@@ -1337,20 +1524,21 @@ function hideYouEliminatedOverlay() {
 function showResults(msg) {
     clearAllTimers();
     hideStarterBanner();
-    G.votes = msg.votes;
-    G.scores = msg.scores || G.scores;
-    G.activePlayers = msg.activePlayers;
-    G.impostors = msg.impostors;
+    G.votes        = msg.votes || {};
+    G.scores       = msg.scores || G.scores;
+    G.activePlayers = msg.activePlayers || G.activePlayers;
+    G.impostors    = msg.impostors || G.impostors;
     if (msg.eliminatedId && !G.eliminated.includes(msg.eliminatedId)) {
         G.eliminated.push(msg.eliminatedId);
     }
     updatePlayersSidebar();
     updateRolePlayersList();
+
     if (msg.eliminatedId === G.myId) {
         G.isSpectator = true;
-        G.fullRoles = msg.fullRoles || G.fullRoles;
+        G.fullRoles   = msg.fullRoles || G.fullRoles;
         showYouEliminatedOverlay(msg.eliminatedRole);
-        setTimeout(() => {
+        setTimeout(function() {
             hideYouEliminatedOverlay();
             showScreen('screen-spectator');
             document.getElementById('spectator-status').textContent = 'Eliminado (' + msg.eliminatedRole + ')';
@@ -1362,18 +1550,21 @@ function showResults(msg) {
         }, 3000);
         return;
     }
+
     if (G.isSpectator) {
         document.getElementById('spectator-status').textContent = msg.isTie ? 'Empate' : msg.eliminatedName + ' eliminado';
         updateSpectatorRoles();
         if (G.isHost) document.getElementById('btn-spectator-next').style.display = 'block';
         return;
     }
+
     showScreen('screen-results');
     G.gamePhase = 'results';
+
     const resultsList = document.getElementById('results-list');
     if (resultsList) {
-        const voteEntries = Object.entries(msg.votes);
-        const maxVotes = voteEntries.length > 0 ? Math.max(...Object.values(msg.votes), 1) : 1;
+        const voteEntries = Object.entries(msg.votes || {});
+        const maxVotes    = voteEntries.length > 0 ? Math.max(...Object.values(msg.votes), 1) : 1;
         resultsList.innerHTML = voteEntries.map(function([id, count]) {
             return '<div class="result-item">' +
                 '<div class="result-header">' +
@@ -1387,46 +1578,46 @@ function showResults(msg) {
                 '</div>';
         }).join('');
     }
+
     const elimBox = document.getElementById('eliminated-box');
     if (elimBox) {
         if (msg.isTie) {
             elimBox.innerHTML = '<div class="eliminated-message">Empate en la votación</div>' +
                 '<div class="eliminated-name">NADIE ELIMINADO</div>' +
                 '<div class="eliminated-role-container">' +
-                '<img src="' + ICONS.tie + '" alt="" class="eliminated-role-icon">' +
-                '</div>';
+                '<img src="' + ICONS.tie + '" alt="" class="eliminated-role-icon"></div>';
         } else {
             const iconSrc = msg.eliminatedRole === 'INFILTRADO' ? ICONS.impostor :
-                           msg.eliminatedRole === 'CHARLATÁN' ? ICONS.charlatan : ICONS.citizen;
+                            msg.eliminatedRole === 'CHARLATÁN'  ? ICONS.charlatan : ICONS.citizen;
             elimBox.innerHTML = '<div class="eliminated-message">Ha sido expulsado</div>' +
                 '<div class="eliminated-name">' + msg.eliminatedName + '</div>' +
                 '<div class="eliminated-role-container">' +
                 '<img src="' + iconSrc + '" alt="" class="eliminated-role-icon">' +
-                '<span class="eliminated-role">Era <strong>' + msg.eliminatedRole + '</strong></span>' +
-                '</div>';
+                '<span class="eliminated-role">Era <strong>' + msg.eliminatedRole + '</strong></span></div>';
         }
     }
+
     const btnNext = document.getElementById('btn-next-round');
-    if (btnNext) {
-        btnNext.style.display = 'none';
-        btnNext.disabled = false;
-        btnNext.className = 'btn btn-next-round';
-    }
+    if (btnNext) { btnNext.style.display = 'none'; btnNext.disabled = false; btnNext.className = 'btn btn-next-round'; }
     document.getElementById('btn-back-lobby').style.display = 'none';
     if (G.isHost) {
-        setTimeout(function() {
-            if (btnNext) btnNext.style.display = 'block';
-        }, RESULT_DISPLAY_TIME);
+        setTimeout(function() { if (btnNext) btnNext.style.display = 'block'; }, RESULT_DISPLAY_TIME);
     }
 }
 
 function nextRound() {
-    if (!G.pubnub || !G.isHost) return;
+    if (!G.db || !G.isHost) return;
     const btnNext = document.getElementById('btn-next-round');
     if (btnNext) btnNext.disabled = true;
-    G.pubnub.publish({
-        channel: G.channel,
-        message: { type: 'next_round', activePlayers: G.activePlayers, fullRoles: G.fullRoles }
+    G.resultsPublished = false;
+    G.rolesVersion     = (G.rolesVersion || 0) + 1;
+    G.db.ref('rooms/' + G.channel + '/votes').remove();
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        gamePhase:     'roles',
+        activePlayers: G.activePlayers,
+        roles:         G.fullRoles,
+        isFirstRound:  false,
+        rolesVersion:  G.rolesVersion
     });
 }
 
@@ -1440,46 +1631,45 @@ function spectatorNextAction() {
 function handleNextRound(msg) {
     clearAllTimers();
     hideStarterBanner();
-    G.votes = {};
+    G.votes        = {};
     G.votedPlayers = new Set();
-    G.voteTargets = {};
+    G.voteTargets  = {};
     G.isFirstRound = false;
-    G.gamePhase = 'roles';
+    G.gamePhase    = 'roles';
     if (msg && msg.activePlayers) G.activePlayers = msg.activePlayers;
-    if (msg && msg.fullRoles) {
-        G.fullRoles = msg.fullRoles;
-        if (G.fullRoles[G.myId]) G.myRole = G.fullRoles[G.myId];
-    }
+    if (msg && msg.fullRoles)     { G.fullRoles = msg.fullRoles; if (G.fullRoles[G.myId]) G.myRole = G.fullRoles[G.myId]; }
+
     if (G.isSpectator) {
         document.getElementById('spectator-status').textContent = 'Esperando inicio...';
         const btnSpecNext = document.getElementById('btn-spectator-next');
         if (btnSpecNext) btnSpecNext.style.display = 'none';
         if (G.isHost && btnSpecNext) {
-            btnSpecNext.textContent = 'Iniciar Ronda';
+            btnSpecNext.textContent  = 'Iniciar Ronda';
             btnSpecNext.style.display = 'block';
-            btnSpecNext.disabled = false;
-            btnSpecNext.className = 'btn btn-start-round';
+            btnSpecNext.disabled      = false;
+            btnSpecNext.className     = 'btn btn-start-round';
         }
         showScreen('screen-spectator');
         updateSpectatorRoles();
         return;
     }
-    const card = document.getElementById('role-card');
+
+    const card     = document.getElementById('role-card');
     const btnStart = document.getElementById('btn-start-round');
-    const btnSkip = document.getElementById('btn-skip-word');
+    const btnSkip  = document.getElementById('btn-skip-word');
     G.roleRevealed = true;
     const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
     if (card) card.className = 'role-card ' + roleClass;
     document.getElementById('role-icon').innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
     document.getElementById('role-title').textContent = G.myRole.role;
-    document.getElementById('role-word').textContent = G.myRole.word;
+    document.getElementById('role-word').textContent  = G.myRole.word;
     document.getElementById('role-instruction').textContent = 'Tu rol (conocido)';
     document.getElementById('points-box').style.display = 'none';
     const timer = document.getElementById('timer');
     timer.style.display = 'none';
     timer.classList.remove('warning');
     document.getElementById('wait-message').style.display = 'block';
-    document.getElementById('starter-info').style.display = 'none';
+    document.getElementById('starter-info').style.display  = 'none';
     if (btnStart) {
         btnStart.style.display = G.isHost ? 'block' : 'none';
         btnStart.disabled = false;
@@ -1492,30 +1682,33 @@ function handleNextRound(msg) {
     updateRolePlayersList();
 }
 
+// ── Game Over ────────────────────────────────────────────────────
+
 function checkGameOver() {
-    if (!G.isHost || !G.pubnub) return;
+    if (!G.isHost || !G.db) return;
     let winner = null;
     let reason = '';
     if (G.impostors.length === 0) {
         winner = 'CIUDADANOS';
         reason = 'Infiltrados eliminados';
-        G.citizens.forEach(id => {
+        G.citizens.forEach(function(id) {
             if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CITIZEN_SURVIVE;
         });
-        G.charlatans.forEach(id => {
+        G.charlatans.forEach(function(id) {
             if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CHARLATAN_SURVIVE;
         });
     } else if (G.activePlayers.length - G.impostors.length <= G.impostors.length) {
         winner = 'INFILTRADOS';
         reason = 'Infiltrados dominan';
-        G.impostors.forEach(id => {
+        G.impostors.forEach(function(id) {
             G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_WIN;
         });
     }
     if (winner) {
-        G.pubnub.publish({
-            channel: G.channel,
-            message: { type: 'game_over', winner: winner, reason: reason, scores: G.scores, roles: G.fullRoles }
+        G.db.ref('rooms/' + G.channel + '/state').update({
+            gamePhase: 'gameover',
+            scores:    G.scores,
+            gameOver:  { winner: winner, reason: reason, scores: G.scores, roles: G.fullRoles }
         });
     }
 }
@@ -1525,97 +1718,134 @@ function handleGameOver(msg) {
     hideStarterBanner();
     hidePlayersSidebar();
     G.gamePhase = 'gameover';
-    G.scores = msg.scores || G.scores;
-    G.fullRoles = msg.roles || G.fullRoles;
+    G.scores    = msg.scores || G.scores;
+    G.fullRoles = msg.roles  || G.fullRoles;
     showScreen('screen-gameover');
-    document.getElementById('gameover-title').textContent = '¡' + msg.winner + ' GANAN!';
+    document.getElementById('gameover-title').textContent  = '¡' + msg.winner + ' GANAN!';
     document.getElementById('gameover-reason').textContent = msg.reason;
     document.getElementById('gameover-icon').src = msg.winner === 'INFILTRADOS' ? ICONS.impostor : ICONS.celebrate;
+
     const scoresList = document.getElementById('final-scores');
-    const sorted = Object.entries(G.scores).sort((a, b) => b[1] - a[1]);
+    const sorted     = Object.entries(G.scores).sort((a, b) => b[1] - a[1]);
     scoresList.innerHTML = '<div class="final-scores-list">' + sorted.map(function([id, score], idx) {
-        const p = G.players[id];
+        const p    = G.players[id];
         const role = G.fullRoles[id];
         let rankHtml = '';
-        if (idx === 0) rankHtml = '<div class="score-rank"><img src="' + ICONS.medalGold + '" alt="1"></div>';
+        if (idx === 0)      rankHtml = '<div class="score-rank"><img src="' + ICONS.medalGold   + '" alt="1"></div>';
         else if (idx === 1) rankHtml = '<div class="score-rank"><img src="' + ICONS.medalSilver + '" alt="2"></div>';
         else if (idx === 2) rankHtml = '<div class="score-rank"><img src="' + ICONS.medalBronze + '" alt="3"></div>';
         else rankHtml = '<div class="score-rank"><span class="score-rank-number">' + (idx + 1) + '</span></div>';
         return '<div class="score-item">' + rankHtml +
             '<div class="score-avatar">' + renderHexAvatar(id, 44) + '</div>' +
             '<div class="score-info">' +
-            '<div class="score-name">' + (p?.name || id) + '</div>' +
-            '<div class="score-role">' + (role?.role || '') + '</div>' +
+            '<div class="score-name">'  + (p?.name   || id) + '</div>' +
+            '<div class="score-role">'  + (role?.role || '') + '</div>' +
             '</div>' +
             '<div class="score-points">' + score + '</div>' +
             '</div>';
     }).join('') + '</div>';
 }
 
+// ── Back to Lobby / Exit ─────────────────────────────────────────
+
 function backToLobby() {
-    if (G.isHost && G.pubnub) {
-        G.pubnub.publish({
-            channel: G.channel,
-            message: { type: 'back_to_lobby', scores: G.scores, hostId: G.hostId, usedWords: G.usedWords }
+    if (G.isHost && G.db) {
+        G.db.ref('rooms/' + G.channel + '/votes').remove();
+        G.db.ref('rooms/' + G.channel + '/state').update({
+            gamePhase: 'lobby',
+            scores:    G.scores,
+            hostId:    G.hostId,
+            usedWords: G.usedWords
         });
     }
-    resetGameState();
-    showScreen('screen-lobby');
-    const btn = document.getElementById('btn-distribute');
-    if (btn) btn.style.display = G.isHost ? 'block' : 'none';
-    G.refreshInterval = setInterval(refreshPlayers, 3000);
-    refreshPlayers();
+    // For host, onStateChange will fire and call handleBackToLobbyFromState
+    // For non-hosts, same happens via listener
 }
 
 function handleBackToLobby(msg) {
     clearAllTimers();
     hideStarterBanner();
-    G.scores = msg.scores || G.scores;
-    G.hostId = msg.hostId || G.hostId;
-    G.isHost = (G.myId === G.hostId);
+    G.scores    = msg.scores   || G.scores;
+    G.hostId    = msg.hostId   || G.hostId;
+    G.isHost    = (G.myId === G.hostId);
     G.usedWords = msg.usedWords || G.usedWords;
     resetGameState();
     showScreen('screen-lobby');
     const btn = document.getElementById('btn-distribute');
     if (btn) btn.style.display = G.isHost ? 'block' : 'none';
-    G.refreshInterval = setInterval(refreshPlayers, 3000);
-    refreshPlayers();
+    renderPlayerList();
 }
 
 function resetGameState() {
     clearAllTimers();
     hideStarterBanner();
     hidePlayersSidebar();
-    G.gamePhase = 'lobby';
-    G.isSpectator = false;
-    G.activePlayers = [];
-    G.eliminated = [];
-    G.impostors = [];
-    G.charlatans = [];
-    G.citizens = [];
-    G.myRole = null;
-    G.fullRoles = {};
-    G.votes = {};
-    G.votedPlayers = new Set();
-    G.voteTargets = {};
-    G.roleRevealed = false;
+    G.gamePhase      = 'lobby';
+    G.prevPhase      = 'lobby';
+    G.isSpectator    = false;
+    G.activePlayers  = [];
+    G.eliminated     = [];
+    G.impostors      = [];
+    G.charlatans     = [];
+    G.citizens       = [];
+    G.myRole         = null;
+    G.fullRoles      = {};
+    G.votes          = {};
+    G.votedPlayers   = new Set();
+    G.voteTargets    = {};
+    G.roleRevealed   = false;
     G.starterPlayerId = null;
-    G.isFirstRound = true;
-    G.roundStarting = false;
+    G.isFirstRound   = true;
+    G.roundStarting  = false;
+    G.roundInProgress = false;
+    G.resultsPublished = false;
 }
+
+function leaveRoom() {
+    if (confirm('¿Abandonar?')) exitGame();
+}
+
+function exitGame() {
+    clearAllTimers();
+    hideStarterBanner();
+    hidePlayersSidebar();
+    if (G.isHost && G.db && G.channel) {
+        // Signal host has left to remaining clients
+        G.db.ref('rooms/' + G.channel + '/state').update({ hostOnline: false });
+    }
+    if (G.db && G.channel) {
+        G.db.ref('rooms/' + G.channel + '/players/' + G.myId).update({ online: false });
+    }
+    cleanupListeners();
+    G.db      = null;
+    G.channel = null;
+    G.isHost  = false;
+    G.hostId  = null;
+    G.players = {};
+    G.scores  = {};
+    G.usedWords = [];
+    G.trueRoles = {};
+    G.prevPhase = null;
+    G.rolesVersion = 0;
+    G.resultsPublished = false;
+    resetGameState();
+    showScreen('screen-home');
+}
+
+// ── Spectator Helpers ────────────────────────────────────────────
 
 function updateSpectatorRoles() {
     const list = document.getElementById('spectator-roles');
     if (!list || !G.fullRoles) return;
     list.innerHTML = Object.entries(G.fullRoles).map(function([id, role]) {
-        const p = G.players[id];
+        const p        = G.players[id];
         const isActive = G.activePlayers.includes(id);
         const statusIcon = isActive ? ICONS.active : ICONS.eliminated;
         return '<div class="player-item" style="opacity:' + (isActive ? 1 : 0.5) + '">' +
             '<div class="player-avatar">' + renderHexAvatar(id, 36) + '</div>' +
             '<div class="player-info">' +
             '<div class="player-name">' + (p?.name || id) + '</div>' +
-            '<div class="player-tag">' + role.role + ' - ' + role.word + '</div>' +
+            '<div class="player-tag">'  + role.role + ' - ' + role.word + '</div>' +
             '</div>' +
             '<img src="' + statusIcon + '" alt="" class="player-status-icon">' +
             '</div>';
@@ -1626,49 +1856,22 @@ function updateSpectatorVotes() {
     const list = document.getElementById('spectator-votes');
     if (!list) return;
     list.innerHTML = G.activePlayers.map(function(id) {
-        const p = G.players[id];
-        const votes = G.votes[id] || 0;
+        const p        = G.players[id];
+        const votes    = G.votes[id]       || 0;
         const hasVoted = G.votedPlayers.has(id);
         const statusIcon = hasVoted ? ICONS.voted : ICONS.pending;
         return '<div class="player-item">' +
             '<div class="player-avatar">' + renderHexAvatar(id, 36) + '</div>' +
             '<div class="player-info">' +
             '<div class="player-name">' + (p?.name || id) + '</div>' +
-            '<div class="player-tag">' + (hasVoted ? 'Ha votado' : 'Pendiente') + '</div>' +
+            '<div class="player-tag">'  + (hasVoted ? 'Ha votado' : 'Pendiente') + '</div>' +
             '</div>' +
             '<span>' + votes + ' votos</span>' +
             '</div>';
     }).join('');
 }
 
-function leaveRoom() {
-    if (confirm('¿Abandonar?')) exitGame();
-}
-
-function exitGame() {
-    clearAllTimers();
-    clearInterval(G.refreshInterval);
-    hideStarterBanner();
-    hidePlayersSidebar();
-    if (G.isHost && G.pubnub) {
-        G.pubnub.publish({
-            channel: G.channel,
-            message: { type: 'host_disconnect' }
-        });
-    }
-    if (G.pubnub) {
-        G.pubnub.unsubscribeAll();
-        G.pubnub = null;
-    }
-    G.channel = null;
-    G.isHost = false;
-    G.hostId = null;
-    G.players = {};
-    G.scores = {};
-    G.usedWords = [];
-    resetGameState();
-    showScreen('screen-home');
-}
+// ── Toast ────────────────────────────────────────────────────────
 
 function toast(message, type) {
     const container = document.getElementById('toast-container');
@@ -1681,4 +1884,4 @@ function toast(message, type) {
 }
 
 window.G = G;
-console.log('INFILTRA v0.9.9.1 cargado completamente');
+console.log('INFILTRA v1.0.0 (Firebase RTDB) cargado completamente');
