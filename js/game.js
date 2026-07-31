@@ -101,6 +101,8 @@ const firebaseConfig = {
 let G = {
     db: null,              // Firebase Database instance
     dbListeners: [],       // Active listeners for cleanup
+    votesListenerAttached: false, // evita doble registro al heredar host
+    claimingHost: false,   // transaction de reclamo de host en curso
     channel: null,
     myId: null,
     playerName: '',
@@ -540,8 +542,9 @@ function initFirebase() {
         name: G.playerName,
         avatar: G.avatar,
         frame: G.frame,
-        online: true
-    });
+        online: true,
+        joinedAt: firebase.database.ServerValue.TIMESTAMP // orden de sucesión de host
+    }).catch(function(e) { console.error('Error registrando jugador:', e); });
     myPlayerRef.onDisconnect().update({ online: false });
 
     // Attach listeners
@@ -571,10 +574,7 @@ function initFirebase() {
 
     if (G.isHost) {
         // Host watches raw votes node
-        const votesRef    = roomRef.child('votes');
-        const votesHandler = onVotesChange;
-        votesRef.on('value', votesHandler);
-        G.dbListeners.push({ ref: votesRef, event: 'value', fn: votesHandler });
+        attachVotesListener();
 
         // Initialise host room state
         stateRef.set({
@@ -615,6 +615,17 @@ function initFirebase() {
 function cleanupListeners() {
     G.dbListeners.forEach(function(l) { l.ref.off(l.event, l.fn); });
     G.dbListeners = [];
+    G.votesListenerAttached = false;
+}
+
+// Registro idempotente del listener de votos (solo host). Necesario
+// también al RECIBIR el rol de host a mitad de partida.
+function attachVotesListener() {
+    if (!G.db || !G.channel || G.votesListenerAttached) return;
+    const votesRef = G.db.ref('rooms/' + G.channel + '/votes');
+    votesRef.on('value', onVotesChange);
+    G.dbListeners.push({ ref: votesRef, event: 'value', fn: onVotesChange });
+    G.votesListenerAttached = true;
 }
 
 // ── Helper: Firebase arrays ──────────────────────────────────────
@@ -644,6 +655,8 @@ function onStateChange(snapshot) {
     const prevPhase = G.prevPhase;
 
     // Sync config
+    const prevHostId = G.hostId;
+    const wasIHost   = G.isHost;
     G.hostId     = state.hostId;
     G.isHost     = (G.myId === G.hostId);
     G.maxPlayers = Math.min(state.maxPlayers || 10, 10);
@@ -651,11 +664,14 @@ function onStateChange(snapshot) {
     G.usedWords  = arrayFromFirebase(state.usedWords);
     G.scores     = state.scores || {};
 
-    // Host disconnect detection
+    // Cambio de host (manual o automático) detectado por estado
+    if (prevHostId && state.hostId && prevHostId !== state.hostId) {
+        handleHostChange(wasIHost);
+    }
+
+    // Host desconectado → sucesión automática en vez de disolver la sala
     if (state.hostOnline === false && !G.isHost && G.gamePhase !== 'home') {
-        toast('Host desconectado', 'error');
-        setTimeout(exitGame, 2000);
-        return;
+        attemptAutoHostClaim();
     }
 
     // Handle phase transitions
@@ -788,6 +804,7 @@ function onPlayersChange(snapshot) {
         if (p.online === false) {
             // Player went offline during game → eliminate
             if (G.gamePhase !== 'lobby' && G.gamePhase !== 'home' && G.gamePhase !== 'gameover') {
+                if (G.players[id]) G.players[id].online = false; // conservar datos para sucesión/render
                 G.activePlayers = G.activePlayers.filter(function(pid) { return pid !== id; });
                 if (!G.eliminated.includes(id)) G.eliminated.push(id);
             } else {
@@ -798,10 +815,18 @@ function onPlayersChange(snapshot) {
         G.players[id] = {
             name:   p.name   || id.substring(0, 8),
             avatar: p.avatar || 'avatar-01',
-            frame:  p.frame  || 'fr-none'
+            frame:  p.frame  || 'fr-none',
+            online: true,
+            joinedAt: p.joinedAt || 0  // orden de sucesión de host
         };
         if (G.scores[id] === undefined) G.scores[id] = 0;
     });
+
+    // Si el jugador del host aparece offline, intentar sucesión
+    if (G.hostId && !G.isHost && G.players[G.hostId] && G.players[G.hostId].online === false &&
+        G.gamePhase !== 'home' && G.gamePhase !== 'gameover') {
+        attemptAutoHostClaim();
+    }
 
     renderPlayerList();
     updatePlayersSidebar();
@@ -1019,15 +1044,23 @@ function renderPlayerList() {
             ? '<button class="btn-kick" onclick="kickPlayer(\'' + id + '\')" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>'
             : '';
 
-        return '<div class="player-item">' + rankHtml +
+        return '<div id="player-item-' + id + '" class="player-item" data-player-id="' + id + '">' + rankHtml +
             '<div class="player-avatar">' + renderHexAvatar(id, 40) + '</div>' +
             '<div class="player-info"><div class="player-name">' + p.name + (isMe ? ' (Tú)' : '') + '</div>' +
             (isHostPlayer ? '<div class="player-tag">Host</div>' : '') + '</div>' +
             '<div class="player-score">' + score + '</div>' + kickBtn + '</div>';
     }).join('');
 
+    // Long-press para transferir host (v1.1.0)
+    if (G.isHost) playerIds.forEach(function(id) {
+        if (id !== G.myId) {
+            const el = document.getElementById('player-item-' + id);
+            if (el) setupLongPressForHost(el, id);
+        }
+    });
+
     const btnDistribute = document.getElementById('btn-distribute');
-    if (btnDistribute) btnDistribute.style.display = G.isHost ? 'block' : 'none';
+    if (btnDistribute) btnDistribute.style.display = G.isHost && (G.gamePhase === 'lobby' || G.gamePhase === 'home') ? 'block' : 'none';
 }
 
 function kickPlayer(playerId) {
@@ -1049,6 +1082,140 @@ function kickPlayer(playerId) {
     }
 }
 window.kickPlayer = kickPlayer;
+
+// ── Transferencia de Host (v1.1.0, portada a RTDB) ───────────────
+// Manual: long-press 800ms sobre un jugador → menú de confirmación.
+// Automática: al detectar host offline, el sucesor determinista
+// (jugador online más antiguo por joinedAt) reclama el rol.
+// Ambas rutas escriben state/hostId con runTransaction: si dos
+// clientes reclaman a la vez, solo uno gana.
+
+function setupLongPressForHost(element, playerId) {
+    if (!G.isHost || playerId === G.myId) return;
+    let pressTimer = null;
+    const startPress = function() {
+        element.classList.add('long-press-active');
+        pressTimer = setTimeout(function() { element.classList.remove('long-press-active'); showHostTransferMenu(playerId); }, 800);
+    };
+    const endPress = function() { element.classList.remove('long-press-active'); if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
+    element.addEventListener('mousedown', startPress);
+    element.addEventListener('mouseup', endPress);
+    element.addEventListener('mouseleave', endPress);
+    element.addEventListener('touchstart', startPress, { passive: true });
+    element.addEventListener('touchend', endPress);
+    element.addEventListener('touchcancel', endPress);
+    element.addEventListener('touchmove', endPress);
+}
+
+function showHostTransferMenu(playerId) {
+    const existing = document.getElementById('host-transfer-menu');
+    if (existing) existing.remove();
+    const playerName = G.players[playerId]?.name || 'Jugador';
+    const menu = document.createElement('div');
+    menu.id = 'host-transfer-menu';
+    menu.className = 'host-transfer-menu';
+    menu.innerHTML = '<h3>¿Transferir host a ' + playerName + '?</h3><button class="host-transfer-btn" onclick="confirmHostTransfer(\'' + playerId + '\')">Sí, hacer host</button><button class="host-transfer-btn cancel" onclick="closeHostTransferMenu()">Cancelar</button>';
+    document.body.appendChild(menu);
+}
+
+function closeHostTransferMenu() { const menu = document.getElementById('host-transfer-menu'); if (menu) menu.remove(); }
+
+function confirmHostTransfer(newHostId) {
+    closeHostTransferMenu();
+    if (!G.isHost || !G.db || !G.players[newHostId] || G.players[newHostId].online === false) return;
+    G.db.ref('rooms/' + G.channel + '/state/hostId').transaction(function(current) {
+        // Solo el host actual puede ceder el rol
+        if (current === G.myId || current === null) return newHostId;
+        return; // abortar: otro cambio se adelantó
+    }).then(function(res) {
+        if (res.committed) toast('Host transferido a ' + (G.players[newHostId]?.name || 'Jugador'), 'success');
+    }).catch(function(e) { console.error('Error transfiriendo host:', e); });
+}
+window.confirmHostTransfer = confirmHostTransfer;
+window.closeHostTransferMenu = closeHostTransferMenu;
+
+function computeHostSuccessor(excludeId) {
+    const candidates = Object.keys(G.players).filter(function(id) {
+        return id !== excludeId && G.players[id] && G.players[id].online !== false;
+    });
+    if (candidates.length === 0) return null;
+    candidates.sort(function(a, b) {
+        const ja = G.players[a].joinedAt || Infinity;
+        const jb = G.players[b].joinedAt || Infinity;
+        if (ja !== jb) return ja - jb;
+        return a < b ? -1 : 1; // desempate determinista por id
+    });
+    return candidates[0];
+}
+
+function attemptAutoHostClaim() {
+    if (!G.db || !G.channel || G.claimingHost || G.isHost) return;
+    const oldHostId = G.hostId;
+    const successor = computeHostSuccessor(oldHostId);
+    if (!successor) {
+        toast('Host desconectado', 'error');
+        setTimeout(exitGame, 2000);
+        return;
+    }
+    if (successor !== G.myId) return; // reclamará otro; la transaction resuelve empates
+    G.claimingHost = true;
+    G.db.ref('rooms/' + G.channel + '/state/hostId').transaction(function(current) {
+        if (current === oldHostId || current === null) return G.myId;
+        return; // otro ya reclamó
+    }).then(function(res) {
+        G.claimingHost = false;
+        // Si se confirmó, onStateChange detecta el cambio y llama a
+        // handleHostChange → becomeHost()
+        if (!res.committed) return;
+    }).catch(function(e) {
+        G.claimingHost = false;
+        console.error('Error reclamando host:', e);
+    });
+}
+
+function handleHostChange(wasIHost) {
+    if (G.isHost && !wasIHost) {
+        toast('¡Ahora eres el host!', 'success');
+        becomeHost();
+    } else if (!G.isHost && wasIHost) {
+        toast('Ya no eres el host', 'info');
+        // El host saliente deja de ser responsable del flag hostOnline
+        if (G.db && G.channel) {
+            G.db.ref('rooms/' + G.channel + '/state/hostOnline').onDisconnect().cancel();
+        }
+        closeHostTransferMenu();
+    }
+    updateHostUI();
+}
+
+// Asumir responsabilidades de host a mitad de partida
+function becomeHost() {
+    if (!G.db || !G.channel) return;
+    attachVotesListener();
+    const hostOnlineRef = G.db.ref('rooms/' + G.channel + '/state/hostOnline');
+    hostOnlineRef.set(true).catch(function(e) { console.error('Error marcando hostOnline:', e); });
+    hostOnlineRef.onDisconnect().set(false);
+    if (G.gamePhase === 'voting') scheduleHostVoteClose();
+}
+
+// Refresca los controles de host según fase (v1.1.0, adaptada)
+function updateHostUI() {
+    const btnDistribute = document.getElementById('btn-distribute');
+    const btnStartRound = document.getElementById('btn-start-round');
+    const btnSkipWord = document.getElementById('btn-skip-word');
+    const btnNextRound = document.getElementById('btn-next-round');
+    const btnBackLobby = document.getElementById('btn-back-lobby');
+    if (btnDistribute) btnDistribute.style.display = G.isHost && G.gamePhase === 'lobby' ? 'block' : 'none';
+    if (G.gamePhase === 'roles' && !G.isSpectator) {
+        if (btnStartRound) btnStartRound.style.display = G.isHost ? 'block' : 'none';
+        if (btnSkipWord) btnSkipWord.style.display = G.isHost ? 'block' : 'none';
+    }
+    if (G.gamePhase === 'results' && !G.isSpectator) {
+        if (btnNextRound) btnNextRound.style.display = G.isHost ? 'block' : 'none';
+        if (btnBackLobby) btnBackLobby.style.display = G.isHost ? 'block' : 'none';
+    }
+    renderPlayerList();
+}
 
 // ── Word Selection ───────────────────────────────────────────────
 
