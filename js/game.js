@@ -1,12 +1,28 @@
 /**
- * INFILTRA - Game Logic v1.0.0 (Firebase RTDB Edition)
- * Cambios:
- * - Migrado completamente de PubNub a Firebase Realtime Database
- * - Estado de sala en rooms/{CODIGO} como árbol JSON
- * - onValue para sincronización en tiempo real
- * - onDisconnect() para detectar desconexiones
- * - QR dinámico apuntando a URL actual
- * - Palabra falsa del Charlatán siempre de la misma categoría (fix)
+ * INFILTRA - Game Logic v2.0.0 (Definitive Edition)
+ *
+ * Base: Firebase RTDB Edition (estado de sala en rooms/{CODIGO},
+ * onValue para sync, onDisconnect para presencia, QR dinámico,
+ * palabra falsa del charlatán de la misma categoría).
+ *
+ * Portado de v1.1.0 "Robust Edition" y adaptado al modelo RTDB:
+ * ✓ Transferencia de host manual (long-press 800ms) y automática,
+ *   ambas con runTransaction sobre state/hostId
+ * ✓ Reconexión tras F5: sesión mínima en sessionStorage + estado
+ *   completo desde RTDB (restoreScreenForPhase/restoreRoleScreen)
+ * ✓ Timers universales anclados a timestamp de servidor
+ *   (.info/serverTimeOffset), resistentes a pantalla apagada
+ * ✓ Botón post-empate con TIE_BUTTON_DELAY
+ * ✓ Overlay "contando votos" y validación de configuración de roles
+ * ✓ Controles de host en modo espectador
+ *
+ * Nuevo en v2.0.0:
+ * ✓ Conteo de votos idempotente + lectura final autoritativa
+ * ✓ Creación de sala atómica (transaction crear-si-no-existe)
+ * ✓ Gracia de desconexión (10s) y de reclamo de host (8s)
+ * ✓ El consenso distribuido de v1.1.0 se elimina: RTDB es la única
+ *   fuente de verdad (el host calcula sobre el nodo votes/ y publica
+ *   en state/; ver tallyVotes/publishResults)
  */
 
 const ICONS = {
@@ -257,7 +273,6 @@ function init() {
     updateProfilePreview();
     createPlayersSidebar();
     createSpectatorControls();
-    console.log('INFILTRA v1.0.0 (Firebase) iniciado');
 }
 
 function loadProfile() {
@@ -1207,29 +1222,6 @@ function handleBackToLobbyFromState(state) {
     handleBackToLobby(msg);
 }
 
-// ── Player State / Config Helpers ────────────────────────────────
-
-function setPlayerState() {
-    if (!G.db || !G.channel) return;
-    G.db.ref('rooms/' + G.channel + '/players/' + G.myId).update({
-        name:   G.playerName,
-        avatar: G.avatar,
-        frame:  G.frame,
-        online: true
-    });
-}
-
-function publishConfig() {
-    if (!G.db || !G.isHost) return;
-    G.db.ref('rooms/' + G.channel + '/state').update({
-        maxPlayers: G.maxPlayers,
-        roundTime:  G.roundTime,
-        hostId:     G.hostId,
-        usedWords:  G.usedWords,
-        scores:     G.scores
-    });
-}
-
 // ── QR Code ──────────────────────────────────────────────────────
 
 function generateQR() {
@@ -1241,7 +1233,7 @@ function generateQR() {
     qr.addData(baseUrl + '?code=' + G.channel);
     qr.make();
     container.innerHTML = qr.createImgTag(4) +
-        '<div class="qr-instructions"><strong>Comparte el código de arriba</strong>para que tus amigos se unan</div>';
+        '<div class="qr-instructions"><strong>Comparte el código</strong> para que tus amigos se unan</div>';
 }
 
 // ── Avatar Rendering ─────────────────────────────────────────────
@@ -1257,10 +1249,6 @@ function renderHexAvatar(playerId, size) {
         '<img src="' + avatar.image + '" alt="" class="hex-avatar-img">' +
         (hasFrame ? '<div class="hex-avatar-frame"></div>' : '') +
         '</div>';
-}
-
-function renderPlayerAvatar(playerId, size) {
-    return renderHexAvatar(playerId, size);
 }
 
 function renderPlayerList() {
@@ -1820,7 +1808,8 @@ function handleStartRound(msg) {
     if (G.isSpectator) {
         const btnSpecNext = document.getElementById('btn-spectator-next');
         if (btnSpecNext) { btnSpecNext.style.display = 'none'; btnSpecNext.disabled = true; }
-        document.getElementById('spectator-status').textContent = starterName + ' inicia!';
+        const specStatus = document.getElementById('spectator-status');
+        if (specStatus) specStatus.textContent = starterName + ' inicia!';
         setTimeout(function() { startSpectatorTimer(); }, ROUND_START_DISPLAY_TIME);
         return;
     }
@@ -2010,11 +1999,14 @@ function sendVote(targetId, button) {
     // Each player writes their own vote to Firebase (clave propia → sin conflicto)
     G.db.ref('rooms/' + G.channel + '/votes/' + G.myId).set(targetId)
         .catch(function(e) { console.error('Error registrando voto:', e); });
-    button.classList.add('voted');
-    button.textContent = 'Votado';
-    button.disabled = true;
+    if (button) {
+        button.classList.add('voted');
+        button.textContent = 'Votado';
+        button.disabled = true;
+    }
     document.querySelectorAll('.btn-vote').forEach(function(btn) { btn.disabled = true; });
-    document.getElementById('vote-status').textContent = 'Voto registrado. Esperando...';
+    const voteStatus = document.getElementById('vote-status');
+    if (voteStatus) voteStatus.textContent = 'Voto registrado. Esperando...';
 }
 
 // ── Results ──────────────────────────────────────────────────────
@@ -2351,6 +2343,7 @@ function handleGameOver(msg) {
     document.getElementById('gameover-icon').src = msg.winner === 'INFILTRADOS' ? ICONS.impostor : ICONS.celebrate;
 
     const scoresList = document.getElementById('final-scores');
+    if (!scoresList) return;
     const sorted     = Object.entries(G.scores).sort((a, b) => b[1] - a[1]);
     scoresList.innerHTML = '<div class="final-scores-list">' + sorted.map(function([id, score], idx) {
         const p    = G.players[id];
@@ -2519,4 +2512,3 @@ function toast(message, type) {
 }
 
 window.G = G;
-console.log('INFILTRA v1.0.0 (Firebase RTDB) cargado completamente');
