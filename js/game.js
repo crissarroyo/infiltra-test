@@ -133,6 +133,10 @@ let G = {
     votes: {},
     votedPlayers: new Set(),
     voteTargets: {},
+    hasVotedThisRound: false,
+    serverTimeOffset: 0,   // corrección de reloj vía .info/serverTimeOffset
+    roundEndTime: null,    // timestamp (servidor) de fin de ronda
+    voteEndTime: null,     // timestamp (servidor) de cierre de votación
     timerInterval: null,
     voteTimerInterval: null,
     voteTimeout: null,
@@ -153,6 +157,7 @@ function init() {
         G.myId = 'P-' + Date.now() + '-' + Math.floor(Math.random() * 10000);
         sessionStorage.setItem('infiltra_myId', G.myId);
     }
+    injectDynamicStyles();
     loadProfile();
     initAvatars();
     initFrames();
@@ -310,6 +315,16 @@ function initParticles() {
         p.style.animationDelay = Math.random() * 5 + 's';
         container.appendChild(p);
     }
+}
+
+// Estilos dinámicos (v1.1.0): overlay de conteo de votos, long-press
+// y menú de transferencia de host.
+function injectDynamicStyles() {
+    if (document.getElementById('dynamic-styles-v2')) return;
+    const style = document.createElement('style');
+    style.id = 'dynamic-styles-v2';
+    style.textContent = 'html,body{overscroll-behavior-y:contain}.player-item.long-press-active{background:rgba(255,255,255,0.1);transform:scale(0.98)}.host-transfer-menu{position:fixed;bottom:0;left:0;right:0;background:#1a1a2e;border-top:2px solid #4a4a6a;padding:20px;z-index:1000;animation:slideUp .3s ease}@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}.host-transfer-menu h3{margin:0 0 15px;color:#fff;text-align:center}.host-transfer-btn{width:100%;padding:12px;margin:5px 0;background:#2d2d4a;border:none;border-radius:8px;color:#fff;font-size:16px;cursor:pointer}.host-transfer-btn:hover{background:#3d3d5a}.host-transfer-btn.cancel{background:#4a2d2d}.counting-votes-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:999}.counting-votes-message{text-align:center;color:#fff}.counting-votes-message h2{font-size:28px}';
+    document.head.appendChild(style);
 }
 
 function createPlayersSidebar() {
@@ -537,6 +552,12 @@ function initFirebase() {
     const playersHandler = onPlayersChange;
     const signalHandler  = onMySignal;
 
+    // Desfase de reloj contra el servidor de Firebase
+    const offsetRef = G.db.ref('.info/serverTimeOffset');
+    const offsetHandler = function(snap) { G.serverTimeOffset = snap.val() || 0; };
+    offsetRef.on('value', offsetHandler);
+    G.dbListeners.push({ ref: offsetRef, event: 'value', fn: offsetHandler });
+
     stateRef.on('value', stateHandler);
     playersRef.on('value', playersHandler);
     signalRef.on('value', signalHandler);
@@ -602,6 +623,14 @@ function arrayFromFirebase(val) {
     if (Array.isArray(val)) return val;
     // Object with numeric-ish keys → values
     return Object.values(val);
+}
+
+// ── Helper: hora de servidor ─────────────────────────────────────
+// Firebase expone el desfase entre el reloj local y el del servidor.
+// Todos los timers se calculan contra serverNow(), nunca contra
+// Date.now() a secas, para que el cierre sea consistente entre clientes.
+function serverNow() {
+    return Date.now() + (G.serverTimeOffset || 0);
 }
 
 // ── Main State Listener ──────────────────────────────────────────
@@ -670,6 +699,11 @@ function onStateChange(snapshot) {
                 G.votes       = state.votes || {};
                 G.votedPlayers = new Set(arrayFromFirebase(state.votedPlayers));
                 G.voteTargets  = state.voteTargets || {};
+                G.hasVotedThisRound = G.votedPlayers.has(G.myId);
+                // Ancla del timer de voto por timestamp de servidor
+                G.voteEndTime = state.voteStartedAt
+                    ? state.voteStartedAt + (state.voteDuration || 30) * 1000
+                    : serverNow() + 30000;
                 startVoting();
                 break;
             case 'results':
@@ -704,6 +738,7 @@ function onStateChange(snapshot) {
         if (G.isSpectator) updateSpectatorVotes();
         // Disable vote buttons for players who have already voted
         if (G.votedPlayers.has(G.myId)) {
+            G.hasVotedThisRound = true;
             document.querySelectorAll('.btn-vote').forEach(btn => btn.disabled = true);
             const statusEl = document.getElementById('vote-status');
             if (statusEl) statusEl.textContent = 'Voto registrado. Esperando...';
@@ -852,10 +887,11 @@ function handleAssignFromState(state) {
 }
 
 function handleStartRoundFromState(state) {
-    const elapsed = state.roundStartedAt
-        ? Math.round((Date.now() - state.roundStartedAt) / 1000)
-        : 0;
-    const remaining = Math.max((state.roundDuration || G.roundTime) - elapsed, 0);
+    // Ancla de fin de ronda por timestamp de servidor: resistente a
+    // pantalla apagada, F5 y relojes locales desviados.
+    const duration = (state.roundDuration || G.roundTime) * 1000;
+    G.roundEndTime = state.roundStartedAt ? state.roundStartedAt + duration : serverNow() + duration;
+    const remaining = Math.max(Math.ceil((G.roundEndTime - serverNow()) / 1000), 0);
     handleStartRound({ starterPlayerId: state.starterPlayerId, time: remaining });
 }
 
@@ -1318,7 +1354,7 @@ function handleStartRound(msg) {
         const btnSpecNext = document.getElementById('btn-spectator-next');
         if (btnSpecNext) { btnSpecNext.style.display = 'none'; btnSpecNext.disabled = true; }
         document.getElementById('spectator-status').textContent = starterName + ' inicia!';
-        setTimeout(function() { startSpectatorTimer(msg.time); }, ROUND_START_DISPLAY_TIME);
+        setTimeout(function() { startSpectatorTimer(); }, ROUND_START_DISPLAY_TIME);
         return;
     }
 
@@ -1327,7 +1363,7 @@ function handleStartRound(msg) {
     setTimeout(function() {
         hideRoundStartOverlay();
         showStarterBanner(starterName);
-        startTimer(msg.time);
+        startTimer();
     }, ROUND_START_DISPLAY_TIME);
 }
 
@@ -1338,54 +1374,63 @@ function clearAllTimers() {
     if (G.spectatorTimerInterval){ clearInterval(G.spectatorTimerInterval); G.spectatorTimerInterval = null; }
 }
 
-function startTimer(duration) {
+function startTimer() {
     if (G.timerInterval) clearInterval(G.timerInterval);
     const timer = document.getElementById('timer');
+    if (!timer || !G.roundEndTime) return;
     timer.style.display = 'block';
     timer.classList.remove('warning');
     document.getElementById('wait-message').style.display = 'none';
     document.getElementById('points-box').style.display  = 'none';
-    let remaining = duration;
-    updateTimerDisplay(remaining);
-    G.timerInterval = setInterval(function() {
-        remaining--;
-        if (remaining < 0) { clearInterval(G.timerInterval); return; }
+    let fired = false;
+    const tick = function() {
+        const remaining = Math.max(0, Math.ceil((G.roundEndTime - serverNow()) / 1000));
         updateTimerDisplay(remaining);
         if (remaining <= 10) timer.classList.add('warning');
-        if (remaining <= 0) {
+        if (remaining <= 0 && !fired) {
+            fired = true;
             clearInterval(G.timerInterval);
+            G.timerInterval = null;
             timer.textContent = '¡TIEMPO!';
             if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
-            // Only HOST transitions to voting in Firebase
-            if (G.isHost) {
-                G.db.ref('rooms/' + G.channel + '/votes').remove();
+            // Solo el HOST transiciona a votación; escribe el ancla del
+            // timer de voto con timestamp de servidor.
+            if (G.isHost && G.db) {
+                G.db.ref('rooms/' + G.channel + '/votes').remove().catch(function() {});
                 G.db.ref('rooms/' + G.channel + '/state').update({
-                    gamePhase:    'voting',
-                    votes:        {},
-                    votedPlayers: [],
-                    voteTargets:  {}
-                });
+                    gamePhase:     'voting',
+                    votes:         {},
+                    votedPlayers:  [],
+                    voteTargets:   {},
+                    voteStartedAt: firebase.database.ServerValue.TIMESTAMP,
+                    voteDuration:  30
+                }).catch(function(e) { console.error('Error iniciando votación:', e); });
             }
-            // Non-hosts wait for phase change via onStateChange
+            // Los no-host esperan el cambio de fase vía onStateChange
         }
-    }, 1000);
+    };
+    tick();
+    G.timerInterval = setInterval(tick, 500);
 }
 
-function startSpectatorTimer(duration) {
+function startSpectatorTimer() {
     if (G.spectatorTimerInterval) clearInterval(G.spectatorTimerInterval);
-    let remaining = duration;
     const specStatus = document.getElementById('spectator-status');
-    function updateDisplay() {
+    if (!specStatus || !G.roundEndTime) return;
+    const tick = function() {
+        const remaining = Math.max(0, Math.ceil((G.roundEndTime - serverNow()) / 1000));
+        if (remaining <= 0) {
+            clearInterval(G.spectatorTimerInterval);
+            G.spectatorTimerInterval = null;
+            specStatus.textContent = 'Votación...';
+            return;
+        }
         const mins = Math.floor(remaining / 60);
         const secs = remaining % 60;
         specStatus.textContent = 'Ronda: ' + mins.toString().padStart(2, '0') + ':' + secs.toString().padStart(2, '0');
-    }
-    updateDisplay();
-    G.spectatorTimerInterval = setInterval(function() {
-        remaining--;
-        if (remaining < 0) { clearInterval(G.spectatorTimerInterval); specStatus.textContent = 'Votación...'; return; }
-        updateDisplay();
-    }, 1000);
+    };
+    tick();
+    G.spectatorTimerInterval = setInterval(tick, 500);
 }
 
 function updateTimerDisplay(seconds) {
@@ -1411,13 +1456,19 @@ function startVoting() {
     G.voteTargets  = G.voteTargets  || {};
     showScreen('screen-voting');
     renderVotingList();
-    startVoteTimer(30);
-    if (G.isHost) {
-        if (G.voteTimeout) clearTimeout(G.voteTimeout);
-        G.voteTimeout = setTimeout(function() {
-            if (!G.resultsPublished) publishResults();
-        }, 32000);
-    }
+    startUniversalVoteTimer();
+    scheduleHostVoteClose();
+}
+
+// El host agenda el cierre de votación contra el ancla de servidor
+// (+2s de gracia para votos en vuelo). Se re-agenda si el host cambia.
+function scheduleHostVoteClose() {
+    if (!G.isHost || !G.voteEndTime) return;
+    if (G.voteTimeout) clearTimeout(G.voteTimeout);
+    const delay = Math.max(0, G.voteEndTime - serverNow()) + 2000;
+    G.voteTimeout = setTimeout(function() {
+        if (!G.resultsPublished) publishResults();
+    }, delay);
 }
 
 function renderVotingList() {
@@ -1438,22 +1489,53 @@ function renderVotingList() {
     });
 }
 
-function startVoteTimer(seconds) {
+// Timer de voto universal (v1.1.0) sobre timestamp de servidor:
+// resistente a pantalla apagada y relojes desviados.
+function startUniversalVoteTimer() {
     if (G.voteTimerInterval) clearInterval(G.voteTimerInterval);
-    let remaining = seconds;
     const display = document.getElementById('vote-timer');
-    display.textContent = '00:' + remaining.toString().padStart(2, '0');
-    G.voteTimerInterval = setInterval(function() {
-        remaining--;
-        if (remaining < 0) { clearInterval(G.voteTimerInterval); return; }
+    const voteStatus = document.getElementById('vote-status');
+    if (!display || !G.voteEndTime) return;
+    const updateTimer = function() {
+        const remaining = Math.max(0, Math.ceil((G.voteEndTime - serverNow()) / 1000));
         display.textContent = '00:' + remaining.toString().padStart(2, '0');
-    }, 1000);
+        if (remaining <= 0) {
+            clearInterval(G.voteTimerInterval);
+            G.voteTimerInterval = null;
+            document.querySelectorAll('.btn-vote').forEach(btn => btn.disabled = true);
+            if (voteStatus) voteStatus.textContent = 'Contando votos...';
+            showCountingVotesOverlay();
+        }
+    };
+    updateTimer();
+    G.voteTimerInterval = setInterval(updateTimer, 250);
+}
+
+// Al volver de pantalla apagada / reconexión: recalcular desde el ancla.
+function updateVoteTimerFromTimestamp() {
+    if (!G.voteEndTime || G.gamePhase !== 'voting') return;
+    const remaining = Math.max(0, Math.ceil((G.voteEndTime - serverNow()) / 1000));
+    if (remaining > 0) {
+        startUniversalVoteTimer();
+        scheduleHostVoteClose();
+    } else {
+        const display = document.getElementById('vote-timer');
+        if (display) display.textContent = '00:00';
+        document.querySelectorAll('.btn-vote').forEach(btn => btn.disabled = true);
+        const voteStatus = document.getElementById('vote-status');
+        if (voteStatus) voteStatus.textContent = 'Contando votos...';
+        showCountingVotesOverlay();
+        if (G.isHost && !G.resultsPublished) publishResults();
+    }
 }
 
 function sendVote(targetId, button) {
-    if (!G.db || G.eliminated.includes(targetId) || !G.activePlayers.includes(targetId)) return;
-    // Each player writes their own vote to Firebase
-    G.db.ref('rooms/' + G.channel + '/votes/' + G.myId).set(targetId);
+    if (!G.db || G.eliminated.includes(targetId) || !G.activePlayers.includes(targetId) || G.hasVotedThisRound) return;
+    if (G.voteEndTime && serverNow() >= G.voteEndTime) { toast('Tiempo agotado', 'warning'); return; }
+    G.hasVotedThisRound = true;
+    // Each player writes their own vote to Firebase (clave propia → sin conflicto)
+    G.db.ref('rooms/' + G.channel + '/votes/' + G.myId).set(targetId)
+        .catch(function(e) { console.error('Error registrando voto:', e); });
     button.classList.add('voted');
     button.textContent = 'Votado';
     button.disabled = true;
@@ -1549,6 +1631,22 @@ function publishResults() {
     setTimeout(checkGameOver, RESULT_DISPLAY_TIME);
 }
 
+// Overlay "contando votos" (v1.1.0): feedback entre el cierre de la
+// votación y la publicación de resultados por el host.
+function showCountingVotesOverlay() {
+    if (document.getElementById('counting-votes-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'counting-votes-overlay';
+    overlay.className = 'counting-votes-overlay';
+    overlay.innerHTML = '<div class="counting-votes-message"><h2>Contando votos...</h2></div>';
+    document.body.appendChild(overlay);
+}
+
+function hideCountingVotesOverlay() {
+    const overlay = document.getElementById('counting-votes-overlay');
+    if (overlay) overlay.remove();
+}
+
 function showYouEliminatedOverlay(role) {
     const existing = document.getElementById('you-eliminated-overlay');
     if (existing) existing.remove();
@@ -1570,6 +1668,7 @@ function hideYouEliminatedOverlay() {
 function showResults(msg) {
     clearAllTimers();
     hideStarterBanner();
+    hideCountingVotesOverlay();
     G.votes        = msg.votes || {};
     G.scores       = msg.scores || G.scores;
     G.activePlayers = msg.activePlayers || G.activePlayers;
@@ -1677,9 +1776,13 @@ function spectatorNextAction() {
 function handleNextRound(msg) {
     clearAllTimers();
     hideStarterBanner();
+    hideCountingVotesOverlay();
     G.votes        = {};
     G.votedPlayers = new Set();
     G.voteTargets  = {};
+    G.hasVotedThisRound = false;
+    G.voteEndTime  = null;
+    G.roundEndTime = null;
     G.isFirstRound = false;
     G.gamePhase    = 'roles';
     if (msg && msg.activePlayers) G.activePlayers = msg.activePlayers;
@@ -1826,6 +1929,7 @@ function resetGameState() {
     clearAllTimers();
     hideStarterBanner();
     hidePlayersSidebar();
+    hideCountingVotesOverlay();
     G.gamePhase      = 'lobby';
     G.prevPhase      = 'lobby';
     G.isSpectator    = false;
@@ -1845,6 +1949,9 @@ function resetGameState() {
     G.roundStarting  = false;
     G.roundInProgress = false;
     G.resultsPublished = false;
+    G.hasVotedThisRound = false;
+    G.roundEndTime   = null;
+    G.voteEndTime    = null;
 }
 
 function leaveRoom() {
