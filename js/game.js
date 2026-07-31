@@ -1409,6 +1409,14 @@ function scheduleOfflineElimination(id) {
         updatePlayersSidebar();
         updateRolePlayersList();
         toast((p.name || 'Jugador') + ' se desconectó', 'warning');
+        // El host escribe la eliminación al estado autoritativo; si no,
+        // el siguiente cambio de fase la borraría al re-sincronizar.
+        if (G.isHost && G.db && G.channel) {
+            G.db.ref('rooms/' + G.channel + '/state').update({
+                activePlayers: G.activePlayers,
+                eliminated:    G.eliminated
+            }).catch(function(e) { console.error('Error registrando desconexión:', e); });
+        }
         // Si ya votaron todos los que quedan, el host cierra antes
         if (G.isHost && G.gamePhase === 'voting' && !G.resultsPublished &&
             G.votedPlayers.size >= G.activePlayers.length) {
@@ -2142,8 +2150,9 @@ function showResults(msg) {
     hideCountingVotesOverlay();
     G.votes        = msg.votes || {};
     G.scores       = msg.scores || G.scores;
-    G.activePlayers = msg.activePlayers || G.activePlayers;
-    G.impostors    = msg.impostors || G.impostors;
+    // arrayFromFirebase: results.* llega del árbol y puede venir como objeto
+    G.activePlayers = msg.activePlayers ? arrayFromFirebase(msg.activePlayers) : G.activePlayers;
+    G.impostors    = msg.impostors ? arrayFromFirebase(msg.impostors) : G.impostors;
     if (msg.eliminatedId && !G.eliminated.includes(msg.eliminatedId)) {
         G.eliminated.push(msg.eliminatedId);
     }
