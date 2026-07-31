@@ -737,6 +737,25 @@ function initFirebase() {
     offsetRef.on('value', offsetHandler);
     G.dbListeners.push({ ref: offsetRef, event: 'value', fn: offsetHandler });
 
+    // Presencia canónica de Firebase: en CADA reconexión (incluida la
+    // vuelta de una pestaña congelada por el navegador) re-publicamos
+    // online:true y re-armamos onDisconnect. Sin esto, el cliente que
+    // vuelve queda como fantasma offline y la sala lo trata como caído.
+    const connRef = G.db.ref('.info/connected');
+    const connHandler = function(snap) {
+        if (snap.val() !== true || !G.db || !G.channel) return;
+        const meRef = G.db.ref('rooms/' + G.channel + '/players/' + G.myId);
+        meRef.update({ online: true }).catch(function() {});
+        meRef.onDisconnect().update({ online: false });
+        if (G.isHost) {
+            const hostOnlineRef = G.db.ref('rooms/' + G.channel + '/state/hostOnline');
+            hostOnlineRef.set(true).catch(function() {});
+            hostOnlineRef.onDisconnect().set(false);
+        }
+    };
+    connRef.on('value', connHandler);
+    G.dbListeners.push({ ref: connRef, event: 'value', fn: connHandler });
+
     stateRef.on('value', stateHandler);
     playersRef.on('value', playersHandler);
     signalRef.on('value', signalHandler);
@@ -1028,6 +1047,15 @@ function onPlayersChange(snapshot) {
 
     renderPlayerList();
     updatePlayersSidebar();
+    updateRolePlayersList();
+    // Tras una reconexión, la pantalla puede haberse pintado antes de
+    // conocer los nombres: refrescar el banner "Inicia: ..." si procede.
+    if (G.gamePhase === 'round' && !G.isSpectator && G.starterPlayerId && G.players[G.starterPlayerId]) {
+        const banner = document.getElementById('starter-banner');
+        if (banner && banner.textContent.includes('Alguien')) {
+            showStarterBanner(G.players[G.starterPlayerId].name);
+        }
+    }
 }
 
 // ── Personal Signal Listener ─────────────────────────────────────
@@ -1490,6 +1518,10 @@ function updateHostUI() {
     if (G.gamePhase === 'results' && !G.isSpectator) {
         if (btnNextRound) btnNextRound.style.display = G.isHost ? 'block' : 'none';
         if (btnBackLobby) btnBackLobby.style.display = G.isHost ? 'block' : 'none';
+    }
+    if (G.gamePhase === 'gameover') {
+        const btnBackToLobby = document.getElementById('btn-back-to-lobby');
+        if (btnBackToLobby) btnBackToLobby.style.display = G.isHost ? 'block' : 'none';
     }
     if (G.isSpectator) updateSpectatorHostControls();
     renderPlayerList();
@@ -2355,6 +2387,10 @@ function handleGameOver(msg) {
     G.scores    = msg.scores || G.scores;
     G.fullRoles = msg.roles  || G.fullRoles;
     showScreen('screen-gameover');
+    // Solo el host puede llevar a todos al lobby; a los demás no se
+    // les muestra un botón que no haría nada.
+    const btnBackToLobby = document.getElementById('btn-back-to-lobby');
+    if (btnBackToLobby) btnBackToLobby.style.display = G.isHost ? 'block' : 'none';
     document.getElementById('gameover-title').textContent  = '¡' + msg.winner + ' GANAN!';
     document.getElementById('gameover-reason').textContent = msg.reason;
     document.getElementById('gameover-icon').src = msg.winner === 'INFILTRADOS' ? ICONS.impostor : ICONS.celebrate;
