@@ -83,6 +83,7 @@ const FRAMES = [
 
 const RESULT_DISPLAY_TIME = 5000;
 const ROUND_START_DISPLAY_TIME = 3500;
+const TIE_BUTTON_DELAY = 2500; // botón post-empate aparece antes (v1.1.0)
 
 // ── Firebase Config ──────────────────────────────────────────────
 const firebaseConfig = {
@@ -1743,10 +1744,16 @@ function showResults(msg) {
     }
 
     const btnNext = document.getElementById('btn-next-round');
+    const btnBackLobby = document.getElementById('btn-back-lobby');
     if (btnNext) { btnNext.style.display = 'none'; btnNext.disabled = false; btnNext.className = 'btn btn-next-round'; }
-    document.getElementById('btn-back-lobby').style.display = 'none';
+    if (btnBackLobby) btnBackLobby.style.display = 'none';
     if (G.isHost) {
-        setTimeout(function() { if (btnNext) btnNext.style.display = 'block'; }, RESULT_DISPLAY_TIME);
+        // En empate el botón aparece antes (TIE_BUTTON_DELAY, v1.1.0)
+        const delay = msg.isTie ? TIE_BUTTON_DELAY : RESULT_DISPLAY_TIME;
+        setTimeout(function() {
+            if (btnNext) btnNext.style.display = 'block';
+            if (btnBackLobby) btnBackLobby.style.display = 'block';
+        }, delay);
     }
 }
 
