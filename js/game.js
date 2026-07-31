@@ -103,6 +103,9 @@ let G = {
     dbListeners: [],       // Active listeners for cleanup
     votesListenerAttached: false, // evita doble registro al heredar host
     claimingHost: false,   // transaction de reclamo de host en curso
+    reconnecting: false,   // restaurando sesión tras F5/reapertura
+    offlineTimers: {},     // gracia antes de eliminar a un desconectado
+    hostClaimTimer: null,  // gracia antes de reclamar host caído
     channel: null,
     myId: null,
     playerName: '',
@@ -154,6 +157,72 @@ let G = {
 
 document.addEventListener('DOMContentLoaded', init);
 
+// ── Persistencia de sesión (reconexión tras F5) ──────────────────
+// RTDB reenvía el estado completo de la sala al re-suscribirse, así
+// que basta con persistir la identidad local mínima; el resto se
+// deriva de rooms/{code}/state al llegar el primer snapshot.
+function saveSession() {
+    if (!G.channel) return;
+    try {
+        sessionStorage.setItem('infiltra_session', JSON.stringify({
+            channel: G.channel,
+            isSpectator: G.isSpectator,
+            roleRevealed: G.roleRevealed,
+            gamePhase: G.gamePhase,
+            timestamp: Date.now()
+        }));
+    } catch (e) { console.error('Error guardando sesión:', e); }
+}
+
+function loadSession() {
+    try {
+        const raw = sessionStorage.getItem('infiltra_session');
+        if (!raw) return null;
+        const s = JSON.parse(raw);
+        if (!s.channel || Date.now() - s.timestamp > 3600000) { clearSession(); return null; }
+        return s;
+    } catch (e) { return null; }
+}
+
+function clearSession() { sessionStorage.removeItem('infiltra_session'); }
+
+// Protección de refresh (v1.1.0): pull-to-refresh, F5/Ctrl+R en
+// partida, aviso beforeunload y resincronización de timers al volver.
+function setupRefreshProtection() {
+    let lastTouchY = 0, touchStartTime = 0;
+    document.addEventListener('touchstart', function(e) {
+        if (e.touches.length !== 1) return;
+        lastTouchY = e.touches[0].clientY;
+        touchStartTime = Date.now();
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+        if (G.gamePhase === 'home' || window.scrollY !== 0) return;
+        const deltaY = e.touches[0].clientY - lastTouchY;
+        if (deltaY > 30 && Date.now() - touchStartTime > 100) e.preventDefault();
+    }, { passive: false });
+
+    document.addEventListener('keydown', function(e) {
+        if (G.gamePhase !== 'home' && G.gamePhase !== 'lobby' && (e.key === 'F5' || (e.ctrlKey && e.key === 'r'))) {
+            e.preventDefault();
+            toast('Actualizar deshabilitado durante el juego', 'warning');
+        }
+    });
+
+    window.addEventListener('beforeunload', function(e) {
+        if (G.gamePhase !== 'home' && G.channel) { e.preventDefault(); e.returnValue = '¿Seguro?'; return e.returnValue; }
+    });
+
+    // Firebase se reconecta solo; aquí solo resincronizamos los timers
+    // contra sus anclas de servidor al volver a primer plano.
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible' && G.channel && G.db) {
+            if (G.gamePhase === 'voting' && G.voteEndTime) updateVoteTimerFromTimestamp();
+            else if (G.gamePhase === 'round' && G.roundEndTime && !G.isSpectator) startTimer();
+        }
+    });
+}
+
 function init() {
     G.myId = sessionStorage.getItem('infiltra_myId');
     if (!G.myId) {
@@ -161,6 +230,22 @@ function init() {
         sessionStorage.setItem('infiltra_myId', G.myId);
     }
     injectDynamicStyles();
+    setupRefreshProtection();
+    const saved = loadSession();
+    if (saved && saved.gamePhase && saved.gamePhase !== 'home') {
+        if (confirm('Se detectó una partida en progreso. ¿Deseas reconectarte?')) {
+            loadProfile();
+            G.channel      = saved.channel;
+            G.isSpectator  = !!saved.isSpectator;
+            G.roleRevealed = !!saved.roleRevealed;
+            G.gamePhase    = 'lobby';
+            G.reconnecting = true;
+            initAvatars(); initFrames(); initCategories(); initParticles();
+            bindEvents(); updateProfilePreview(); createPlayersSidebar();
+            initFirebase();
+            return;
+        } else { clearSession(); }
+    }
     loadProfile();
     initAvatars();
     initFrames();
@@ -571,12 +656,13 @@ function initFirebase() {
 
     // Write own player presence
     const myPlayerRef = roomRef.child('players/' + G.myId);
-    myPlayerRef.set({
-        name: G.playerName,
-        avatar: G.avatar,
-        frame: G.frame,
-        online: true,
-        joinedAt: firebase.database.ServerValue.TIMESTAMP // orden de sucesión de host
+    // update + joinedAt condicional: en reconexión (F5) se conserva el
+    // joinedAt original para no perder el orden de sucesión de host.
+    myPlayerRef.once('value').then(function(snap) {
+        const existing = snap.val();
+        const data = { name: G.playerName, avatar: G.avatar, frame: G.frame, online: true };
+        if (!existing || !existing.joinedAt) data.joinedAt = firebase.database.ServerValue.TIMESTAMP;
+        return myPlayerRef.update(data);
     }).catch(function(e) { console.error('Error registrando jugador:', e); });
     myPlayerRef.onDisconnect().update({ online: false });
 
@@ -689,9 +775,12 @@ function onStateChange(snapshot) {
         handleHostChange(wasIHost);
     }
 
-    // Host desconectado → sucesión automática en vez de disolver la sala
+    // Host desconectado → sucesión automática (con gracia por si es un F5)
     if (state.hostOnline === false && !G.isHost && G.gamePhase !== 'home') {
-        attemptAutoHostClaim();
+        scheduleHostClaim();
+    } else if (state.hostOnline !== false && G.hostClaimTimer) {
+        clearTimeout(G.hostClaimTimer);
+        G.hostClaimTimer = null;
     }
 
     // Handle phase transitions
@@ -709,6 +798,36 @@ function onStateChange(snapshot) {
         G.fullRoles     = state.roles || {};
         G.starterPlayerId = state.starterPlayerId || null;
         if (G.isHost && state.trueRoles) G.trueRoles = state.trueRoles;
+
+        // Reconexión (F5): el primer snapshot trae la sala completa.
+        // Restauramos rol, anclas de timers y pantalla según la fase,
+        // sin pasar por los handlers de transición normales.
+        if (G.reconnecting) {
+            G.reconnecting = false;
+            if (state.roles && state.roles[G.myId]) G.myRole = state.roles[G.myId];
+            if (G.eliminated.includes(G.myId)) G.isSpectator = true;
+            G.rolesVersion = state.rolesVersion || 0;
+            if (newPhase === 'round' && state.roundStartedAt) {
+                G.roundEndTime = state.roundStartedAt + (state.roundDuration || G.roundTime) * 1000;
+            }
+            if (newPhase === 'voting') {
+                G.votes        = state.votes || {};
+                G.votedPlayers = new Set(arrayFromFirebase(state.votedPlayers));
+                G.voteTargets  = state.voteTargets || {};
+                G.hasVotedThisRound = G.votedPlayers.has(G.myId);
+                G.voteEndTime  = state.voteStartedAt
+                    ? state.voteStartedAt + (state.voteDuration || 30) * 1000
+                    : null;
+            }
+            if (G.isHost) becomeHost(); // era host: reasumir hostOnline y listener de votos
+            document.getElementById('display-room-code').textContent = G.channel;
+            restoreScreenForPhase(state);
+            renderPlayerList();
+            updatePlayersSidebar();
+            saveSession();
+            toast('Reconectado', 'success');
+            return;
+        }
 
         switch (newPhase) {
             case 'lobby':
@@ -752,6 +871,7 @@ function onStateChange(snapshot) {
         }
         renderPlayerList();
         updatePlayersSidebar();
+        saveSession();
         return;
     }
 
@@ -822,16 +942,18 @@ function onPlayersChange(snapshot) {
         const p = playersData[id];
         if (!p) return;
         if (p.online === false) {
-            // Player went offline during game → eliminate
+            // Offline en partida → eliminación con periodo de gracia
+            // (un F5 tarda segundos en volver; no lo tratamos como abandono)
             if (G.gamePhase !== 'lobby' && G.gamePhase !== 'home' && G.gamePhase !== 'gameover') {
                 if (G.players[id]) G.players[id].online = false; // conservar datos para sucesión/render
-                G.activePlayers = G.activePlayers.filter(function(pid) { return pid !== id; });
-                if (!G.eliminated.includes(id)) G.eliminated.push(id);
+                scheduleOfflineElimination(id);
             } else {
                 delete G.players[id];
             }
             return;
         }
+        // Volvió online → cancelar eliminación pendiente
+        if (G.offlineTimers[id]) { clearTimeout(G.offlineTimers[id]); delete G.offlineTimers[id]; }
         G.players[id] = {
             name:   p.name   || id.substring(0, 8),
             avatar: p.avatar || 'avatar-01',
@@ -842,10 +964,10 @@ function onPlayersChange(snapshot) {
         if (G.scores[id] === undefined) G.scores[id] = 0;
     });
 
-    // Si el jugador del host aparece offline, intentar sucesión
+    // Si el jugador del host aparece offline, agendar sucesión con gracia
     if (G.hostId && !G.isHost && G.players[G.hostId] && G.players[G.hostId].online === false &&
         G.gamePhase !== 'home' && G.gamePhase !== 'gameover') {
-        attemptAutoHostClaim();
+        scheduleHostClaim();
     }
 
     renderPlayerList();
@@ -972,6 +1094,67 @@ function handleSkipWordFromState(state) {
         usedWords:       arrayFromFirebase(state.usedWords)
     };
     handleSkipWord(msg);
+}
+
+// ── Restauración de pantalla tras reconexión (v1.1.0 → RTDB) ─────
+function restoreScreenForPhase(state) {
+    switch (G.gamePhase) {
+        case 'lobby':
+            showScreen('screen-lobby');
+            generateQR();
+            renderPlayerList();
+            break;
+        case 'roles':
+            if (G.isSpectator) { showScreen('screen-spectator'); updateSpectatorRoles(); }
+            else { showScreen('screen-role'); restoreRoleScreen(); }
+            break;
+        case 'round':
+            if (G.isSpectator) { showScreen('screen-spectator'); updateSpectatorRoles(); startSpectatorTimer(); }
+            else {
+                showScreen('screen-role');
+                restoreRoleScreen();
+                showStarterBanner(G.players[G.starterPlayerId]?.name || 'Alguien');
+                startTimer();
+            }
+            break;
+        case 'voting':
+            if (G.isSpectator) { showScreen('screen-spectator'); updateSpectatorVotes(); }
+            else {
+                showScreen('screen-voting');
+                renderVotingList();
+                updateVoteTimerFromTimestamp();
+            }
+            break;
+        case 'results':
+            showResults((state && state.results) || {});
+            break;
+        case 'gameover':
+            handleGameOver((state && state.gameOver) || {});
+            break;
+        default:
+            showScreen('screen-lobby');
+    }
+    updateHostUI();
+}
+
+function restoreRoleScreen() {
+    if (!G.myRole) return;
+    const card = document.getElementById('role-card');
+    if (G.roleRevealed) {
+        const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
+        if (card) card.className = 'role-card ' + roleClass;
+        document.getElementById('role-icon').innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
+        document.getElementById('role-title').textContent = G.myRole.role;
+        document.getElementById('role-word').textContent = G.myRole.word;
+        document.getElementById('role-instruction').textContent = 'Tu rol (ya revelado)';
+    } else {
+        if (card) card.className = 'role-card blurred';
+        document.getElementById('role-icon').innerHTML = '<img src="' + ICONS.help + '" alt="?" class="role-icon-img">';
+        document.getElementById('role-title').textContent = 'SECRETO';
+        document.getElementById('role-word').textContent = '???';
+        document.getElementById('role-instruction').textContent = 'Toca la carta para revelar';
+    }
+    updateRolePlayersList();
 }
 
 function handleBackToLobbyFromState(state) {
@@ -1166,6 +1349,43 @@ function computeHostSuccessor(excludeId) {
         return a < b ? -1 : 1; // desempate determinista por id
     });
     return candidates[0];
+}
+
+// Gracia antes de reclamar: si el host solo hizo F5, vuelve en segundos
+// y recupera su flag hostOnline sin cambio de rol.
+const HOST_CLAIM_GRACE = 8000;
+function scheduleHostClaim() {
+    if (G.hostClaimTimer || G.isHost) return;
+    G.hostClaimTimer = setTimeout(function() {
+        G.hostClaimTimer = null;
+        if (!G.db || !G.channel || G.isHost) return;
+        G.db.ref('rooms/' + G.channel + '/state/hostOnline').once('value').then(function(snap) {
+            if (snap.val() === false) attemptAutoHostClaim();
+        }).catch(function() { attemptAutoHostClaim(); });
+    }, HOST_CLAIM_GRACE);
+}
+
+// Gracia antes de eliminar a un jugador offline en partida.
+const DISCONNECT_GRACE = 10000;
+function scheduleOfflineElimination(id) {
+    if (G.offlineTimers[id] || G.eliminated.includes(id)) return;
+    G.offlineTimers[id] = setTimeout(function() {
+        delete G.offlineTimers[id];
+        const p = G.players[id];
+        if (!p || p.online !== false) return; // volvió a tiempo
+        if (G.gamePhase === 'lobby' || G.gamePhase === 'home' || G.gamePhase === 'gameover') return;
+        G.activePlayers = G.activePlayers.filter(function(pid) { return pid !== id; });
+        if (!G.eliminated.includes(id)) G.eliminated.push(id);
+        renderPlayerList();
+        updatePlayersSidebar();
+        updateRolePlayersList();
+        toast((p.name || 'Jugador') + ' se desconectó', 'warning');
+        // Si ya votaron todos los que quedan, el host cierra antes
+        if (G.isHost && G.gamePhase === 'voting' && !G.resultsPublished &&
+            G.votedPlayers.size >= G.activePlayers.length) {
+            publishResults();
+        }
+    }, DISCONNECT_GRACE);
 }
 
 function attemptAutoHostClaim() {
@@ -1460,6 +1680,7 @@ function revealRole() {
     const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
     if (card) card.classList.add(roleClass);
     showPointsReminder();
+    saveSession(); // conservar roleRevealed para restaurar tras F5
 }
 
 function showPointsReminder() {
@@ -1679,18 +1900,25 @@ function renderVotingList() {
     const list = document.getElementById('voting-list');
     if (!list) return;
     const votable = G.activePlayers.filter(id => id !== G.myId && !G.eliminated.includes(id));
+    // FIX v2: los botones se deshabilitan si YO ya voté (antes se
+    // deshabilitaba el botón de quien había votado, que es otra cosa)
+    const iVoted = G.hasVotedThisRound || G.votedPlayers.has(G.myId);
     list.innerHTML = votable.map(function(id) {
-        const alreadyVoted = G.votedPlayers.has(id);
         return '<div class="vote-item">' +
             '<div class="vote-avatar">' + renderHexAvatar(id, 48) + '</div>' +
             '<div class="player-info"><div class="player-name">' + (G.players[id]?.name || id) + '</div></div>' +
-            '<button class="btn-vote' + (alreadyVoted ? ' voted' : '') + '" data-target="' + id + '"' +
-            (alreadyVoted ? ' disabled' : '') + '>' +
-            (alreadyVoted ? 'Votado' : 'Votar') + '</button></div>';
+            '<button class="btn-vote' + (iVoted ? ' voted' : '') + '" data-target="' + id + '"' +
+            (iVoted ? ' disabled' : '') + '>' +
+            (iVoted ? 'Votado' : 'Votar') + '</button></div>';
     }).join('');
-    list.querySelectorAll('.btn-vote').forEach(function(btn) {
-        btn.onclick = function() { sendVote(btn.dataset.target, btn); };
-    });
+    if (!iVoted) {
+        list.querySelectorAll('.btn-vote').forEach(function(btn) {
+            btn.onclick = function() { sendVote(btn.dataset.target, btn); };
+        });
+    } else {
+        const voteStatus = document.getElementById('vote-status');
+        if (voteStatus) voteStatus.textContent = 'Voto registrado. Esperando...';
+    }
 }
 
 // Timer de voto universal (v1.1.0) sobre timestamp de servidor:
@@ -2177,13 +2405,19 @@ function exitGame() {
     clearAllTimers();
     hideStarterBanner();
     hidePlayersSidebar();
+    Object.values(G.offlineTimers).forEach(clearTimeout);
+    G.offlineTimers = {};
+    if (G.hostClaimTimer) { clearTimeout(G.hostClaimTimer); G.hostClaimTimer = null; }
     if (G.isHost && G.db && G.channel) {
-        // Signal host has left to remaining clients
-        G.db.ref('rooms/' + G.channel + '/state').update({ hostOnline: false });
+        // Signal host has left to remaining clients (dispara sucesión)
+        G.db.ref('rooms/' + G.channel + '/state').update({ hostOnline: false }).catch(function() {});
     }
     if (G.db && G.channel) {
-        G.db.ref('rooms/' + G.channel + '/players/' + G.myId).update({ online: false });
+        const myRef = G.db.ref('rooms/' + G.channel + '/players/' + G.myId);
+        myRef.update({ online: false }).catch(function() {});
+        myRef.onDisconnect().cancel(); // salida limpia: sin escrituras póstumas
     }
+    clearSession();
     cleanupListeners();
     G.db      = null;
     G.channel = null;
