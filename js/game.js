@@ -834,30 +834,46 @@ function onMySignal(snapshot) {
 
 // ── Votes Listener (host only) ───────────────────────────────────
 
-function onVotesChange(snapshot) {
-    if (!G.isHost || G.gamePhase !== 'voting') return;
-    const rawVotes = snapshot.val() || {};
-
-    Object.entries(rawVotes).forEach(function([voterId, targetId]) {
+// Derivación idempotente del recuento desde el nodo crudo de votos.
+// Cada jugador escribe solo su clave votes/{id} (sin conflicto de
+// escritura); el host SIEMPRE recalcula desde cero sobre el snapshot
+// completo, nunca acumula incrementalmente. Así el resultado es
+// independiente del orden/duplicación de eventos y sobrevive a un
+// cambio de host a mitad de votación.
+function tallyVotes(rawVotes) {
+    const votes = {};
+    const votedPlayers = new Set();
+    const voteTargets = {};
+    Object.entries(rawVotes || {}).forEach(function([voterId, targetId]) {
         if (
-            !G.votedPlayers.has(voterId) &&
+            typeof targetId === 'string' &&
             voterId !== targetId &&
+            !votedPlayers.has(voterId) &&
             G.activePlayers.includes(voterId) &&
             G.activePlayers.includes(targetId) &&
             !G.eliminated.includes(targetId)
         ) {
-            G.votes[targetId] = (G.votes[targetId] || 0) + 1;
-            G.votedPlayers.add(voterId);
-            G.voteTargets[voterId] = targetId;
+            votes[targetId] = (votes[targetId] || 0) + 1;
+            votedPlayers.add(voterId);
+            voteTargets[voterId] = targetId;
         }
     });
+    return { votes: votes, votedPlayers: votedPlayers, voteTargets: voteTargets };
+}
+
+function onVotesChange(snapshot) {
+    if (!G.isHost || G.gamePhase !== 'voting') return;
+    const tally = tallyVotes(snapshot.val());
+    G.votes        = tally.votes;
+    G.votedPlayers = tally.votedPlayers;
+    G.voteTargets  = tally.voteTargets;
 
     // Broadcast vote progress to all clients
     G.db.ref('rooms/' + G.channel + '/state').update({
         votes:        G.votes,
         votedPlayers: Array.from(G.votedPlayers),
         voteTargets:  G.voteTargets
-    });
+    }).catch(function(e) { console.error('Error sincronizando votos:', e); });
 
     // All voted → publish results early
     if (G.votedPlayers.size >= G.activePlayers.length && !G.resultsPublished) {
@@ -1544,22 +1560,27 @@ function sendVote(targetId, button) {
     document.getElementById('vote-status').textContent = 'Voto registrado. Esperando...';
 }
 
-// handleVote is called internally by onVotesChange (host only)
-function handleVote(voterId, targetId) {
-    if (!G.activePlayers.includes(targetId) || G.eliminated.includes(targetId) ||
-        !G.activePlayers.includes(voterId)  || G.votedPlayers.has(voterId) || voterId === targetId) return;
-    G.votes[targetId] = (G.votes[targetId] || 0) + 1;
-    G.votedPlayers.add(voterId);
-    G.voteTargets[voterId] = targetId;
-}
-
 // ── Results ──────────────────────────────────────────────────────
 
 function publishResults() {
     if (!G.isHost || !G.db || G.resultsPublished) return;
     G.resultsPublished = true;
     clearAllTimers();
+    // Lectura única y autoritativa del nodo de votos antes de calcular:
+    // no dependemos de que el listener haya procesado el último evento.
+    G.db.ref('rooms/' + G.channel + '/votes').once('value').then(function(snap) {
+        const tally = tallyVotes(snap.val());
+        G.votes        = tally.votes;
+        G.votedPlayers = tally.votedPlayers;
+        G.voteTargets  = tally.voteTargets;
+        finalizeResults();
+    }).catch(function(e) {
+        console.error('Error leyendo votos, uso el estado local:', e);
+        finalizeResults();
+    });
+}
 
+function finalizeResults() {
     let maxVotes  = 0;
     let mostVoted = [];
     Object.entries(G.votes).forEach(function([id, count]) {
@@ -1627,7 +1648,7 @@ function publishResults() {
         scores:        G.scores,
         roles:         G.fullRoles,
         results:       resultsPayload
-    });
+    }).catch(function(e) { console.error('Error publicando resultados:', e); });
 
     setTimeout(checkGameOver, RESULT_DISPLAY_TIME);
 }
