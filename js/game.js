@@ -270,6 +270,35 @@ function updateSelectedCategories() {
     G.selectedCategories = Array.from(document.querySelectorAll('.category-item input:checked')).map(cb => cb.value);
 }
 
+// ── Role Configuration Validation (ported from v1.1.0) ───────────
+function validateRoleConfiguration() {
+    const maxPlayers = parseInt(document.getElementById('config-max-players')?.value) || 10;
+    const impostors = parseInt(document.getElementById('config-impostors')?.value) || 1;
+    const charlatans = parseInt(document.getElementById('config-charlatans')?.value) || 0;
+    const specialRoles = impostors + charlatans;
+    const citizens = maxPlayers - specialRoles;
+    const summaryImpostors = document.getElementById('summary-impostors');
+    const summaryCharlatans = document.getElementById('summary-charlatans');
+    const summaryCitizens = document.getElementById('summary-citizens');
+    const summaryTotal = document.getElementById('summary-total');
+    const errorElement = document.getElementById('summary-error');
+    const createButton = document.getElementById('btn-create-room');
+    if (summaryImpostors) summaryImpostors.textContent = impostors;
+    if (summaryCharlatans) summaryCharlatans.textContent = charlatans;
+    if (summaryCitizens) summaryCitizens.textContent = Math.max(0, citizens);
+    if (summaryTotal) summaryTotal.textContent = maxPlayers;
+    if (specialRoles >= maxPlayers) {
+        if (errorElement) { errorElement.textContent = '❌ Debe haber al menos 1 ciudadano'; errorElement.style.display = 'block'; errorElement.style.color = '#ff4757'; }
+        if (createButton) { createButton.disabled = true; createButton.style.opacity = '0.5'; }
+        return false;
+    }
+    if (citizens === 1) {
+        if (errorElement) { errorElement.textContent = '⚠️ Se recomienda al menos 2 ciudadanos'; errorElement.style.display = 'block'; errorElement.style.color = '#ffa502'; }
+    } else { if (errorElement) errorElement.style.display = 'none'; }
+    if (createButton) { createButton.disabled = false; createButton.style.opacity = '1'; }
+    return true;
+}
+
 function initParticles() {
     const container = document.getElementById('particles');
     if (!container) return;
@@ -382,6 +411,22 @@ function bindEvents() {
     bind('btn-help-back', function() {
         showScreen(G.screenStack.pop() || 'screen-home');
     });
+    const maxPlayersInput = document.getElementById('config-max-players');
+    const impostorsInput = document.getElementById('config-impostors');
+    const charlatansInput = document.getElementById('config-charlatans');
+    if (maxPlayersInput) maxPlayersInput.addEventListener('input', function() {
+        const maxPlayers = parseInt(this.value) || 3;
+        if (impostorsInput) impostorsInput.max = maxPlayers - 1;
+        if (charlatansInput) charlatansInput.max = maxPlayers - 1;
+        validateRoleConfiguration();
+    });
+    if (impostorsInput) impostorsInput.addEventListener('input', function() {
+        const maxPlayers = parseInt(maxPlayersInput?.value) || 10;
+        const impostors = parseInt(this.value) || 1;
+        if (charlatansInput) charlatansInput.max = Math.max(0, maxPlayers - impostors - 1);
+        validateRoleConfiguration();
+    });
+    if (charlatansInput) charlatansInput.addEventListener('input', validateRoleConfiguration);
     const nameInput = document.getElementById('input-name');
     if (nameInput) nameInput.addEventListener('input', updateProfilePreview);
 }
@@ -417,6 +462,7 @@ function showConfig() {
     }
     saveProfile();
     showScreen('screen-config');
+    setTimeout(validateRoleConfiguration, 100);
 }
 
 // ── Room Creation / Join ─────────────────────────────────────────
