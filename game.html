@@ -17,8 +17,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-    <link rel="stylesheet" href="css/game-styles.css">
-    <link rel="stylesheet" href="css/hex-avatars.css">
+    <link rel="stylesheet" href="css/game-styles.css?v=2.0.0">
+    <link rel="stylesheet" href="css/hex-avatars.css?v=2.0.0">
 </head>
 <body class="game-page">
     <div class="particles-bg" id="particles"></div>
@@ -124,6 +124,32 @@
                         </div>
                         <div class="categories-list" id="categories-list"></div>
                     </div>
+                    <div class="roles-summary" id="roles-summary">
+    <div class="summary-header">
+        <h4>Distribución de Roles</h4>
+    </div>
+    <div class="summary-content">
+        <div class="summary-row">
+            <span class="summary-icon"><img src="assets/icons/icon-impostor.png" alt=""></span>
+            <span class="summary-label">Infiltrados:</span>
+            <span class="summary-value" id="summary-impostors">1</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-icon"><img src="assets/icons/icon-charlatan.png" alt=""></span>
+            <span class="summary-label">Charlatanes:</span>
+            <span class="summary-value" id="summary-charlatans">0</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-icon"><img src="assets/icons/icon-citizen.png" alt=""></span>
+            <span class="summary-label">Ciudadanos:</span>
+            <span class="summary-value" id="summary-citizens">9</span>
+        </div>
+        <div class="summary-total">
+            <strong>Total:</strong> <span id="summary-total">10</span> jugadores
+        </div>
+    </div>
+    <div class="summary-error" id="summary-error" style="display:none;"></div>
+</div>
                     <div class="btn-group">
                         <button class="btn btn-primary" id="btn-create-room">
                             Crear Sala
@@ -338,6 +364,6 @@
         </main>
     </div>
     <div class="toast-container" id="toast-container"></div>
-    <script src="js/game.js"></script>
+    <script src="js/game.js?v=2.0.0"></script>
 </body>
 </html>
