@@ -242,6 +242,7 @@ function init() {
             G.reconnecting = true;
             initAvatars(); initFrames(); initCategories(); initParticles();
             bindEvents(); updateProfilePreview(); createPlayersSidebar();
+            createSpectatorControls();
             initFirebase();
             return;
         } else { clearSession(); }
@@ -255,6 +256,7 @@ function init() {
     checkURLParams();
     updateProfilePreview();
     createPlayersSidebar();
+    createSpectatorControls();
     console.log('INFILTRA v1.0.0 (Firebase) iniciado');
 }
 
@@ -422,6 +424,45 @@ function createPlayersSidebar() {
     sidebar.className = 'players-sidebar';
     sidebar.innerHTML = '<div class="players-sidebar-title">Jugadores</div><div class="players-sidebar-list" id="sidebar-players-list"></div>';
     document.body.appendChild(sidebar);
+}
+
+// ── Controles de host en modo espectador (v1.1.0) ────────────────
+// Un host eliminado sigue dirigiendo la partida desde la pantalla de
+// espectador: siguiente ronda, cambiar palabra y volver al lobby.
+function createSpectatorControls() {
+    const spectatorScreen = document.getElementById('screen-spectator');
+    if (!spectatorScreen || document.getElementById('btn-spectator-skip')) return;
+    const skipBtn = document.createElement('button');
+    skipBtn.id = 'btn-spectator-skip';
+    skipBtn.className = 'btn btn-secondary';
+    skipBtn.textContent = 'Cambiar Palabra';
+    skipBtn.style.display = 'none';
+    skipBtn.onclick = skipWord;
+    const controls = spectatorScreen.querySelector('.spectator-controls');
+    if (controls) {
+        const nextBtn = document.getElementById('btn-spectator-next');
+        if (nextBtn) controls.insertBefore(skipBtn, nextBtn);
+        else controls.appendChild(skipBtn);
+    }
+}
+
+function updateSpectatorHostControls() {
+    const btnNext = document.getElementById('btn-spectator-next');
+    const btnLobby = document.getElementById('btn-spectator-lobby');
+    const btnSkip = document.getElementById('btn-spectator-skip');
+    if (G.isHost && G.isSpectator) {
+        if (btnNext) {
+            btnNext.style.display = 'block';
+            btnNext.disabled = false;
+            btnNext.textContent = (G.gamePhase === 'results' || G.gamePhase === 'voting') ? 'Siguiente Ronda' : 'Iniciar Ronda';
+        }
+        if (btnLobby) btnLobby.style.display = 'block';
+        if (btnSkip) btnSkip.style.display = G.gamePhase === 'roles' ? 'block' : 'none';
+    } else {
+        if (btnNext) btnNext.style.display = 'none';
+        if (btnLobby) btnLobby.style.display = 'none';
+        if (btnSkip) btnSkip.style.display = 'none';
+    }
 }
 
 function updateRolePlayersList() {
@@ -1454,6 +1495,7 @@ function updateHostUI() {
         if (btnNextRound) btnNextRound.style.display = G.isHost ? 'block' : 'none';
         if (btnBackLobby) btnBackLobby.style.display = G.isHost ? 'block' : 'none';
     }
+    if (G.isSpectator) updateSpectatorHostControls();
     renderPlayerList();
 }
 
@@ -2125,18 +2167,16 @@ function showResults(msg) {
             showScreen('screen-spectator');
             document.getElementById('spectator-status').textContent = 'Eliminado (' + msg.eliminatedRole + ')';
             updateSpectatorRoles();
-            if (G.isHost) {
-                document.getElementById('btn-spectator-next').style.display = 'block';
-                document.getElementById('btn-spectator-lobby').style.display = 'block';
-            }
+            updateSpectatorHostControls();
         }, 3000);
+        saveSession();
         return;
     }
 
     if (G.isSpectator) {
         document.getElementById('spectator-status').textContent = msg.isTie ? 'Empate' : msg.eliminatedName + ' eliminado';
         updateSpectatorRoles();
-        if (G.isHost) document.getElementById('btn-spectator-next').style.display = 'block';
+        updateSpectatorHostControls();
         return;
     }
 
@@ -2233,16 +2273,9 @@ function handleNextRound(msg) {
 
     if (G.isSpectator) {
         document.getElementById('spectator-status').textContent = 'Esperando inicio...';
-        const btnSpecNext = document.getElementById('btn-spectator-next');
-        if (btnSpecNext) btnSpecNext.style.display = 'none';
-        if (G.isHost && btnSpecNext) {
-            btnSpecNext.textContent  = 'Iniciar Ronda';
-            btnSpecNext.style.display = 'block';
-            btnSpecNext.disabled      = false;
-            btnSpecNext.className     = 'btn btn-start-round';
-        }
         showScreen('screen-spectator');
         updateSpectatorRoles();
+        updateSpectatorHostControls();
         return;
     }
 
