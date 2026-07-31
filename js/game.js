@@ -494,13 +494,46 @@ function createRoom() {
     G.hostId = G.myId;
     G.maxPlayers = Math.min(parseInt(document.getElementById('config-max-players')?.value) || 10, 10);
     G.roundTime = parseInt(document.getElementById('config-time')?.value) || 60;
-    G.channel = generateCode();
     G.scores = {};
     G.usedWords = [];
     G.isFirstRound = true;
     G.gamePhase = 'lobby';
     saveProfile();
-    initFirebase();
+    createRoomAtomic(0);
+}
+
+// Creación de sala atómica: transaction "crear si no existe" sobre
+// rooms/{code}. Si el código de 4 letras ya está ocupado, se genera
+// otro y se reintenta (evita pisar una sala ajena en curso).
+function createRoomAtomic(attempts) {
+    if (attempts >= 5) { toast('No se pudo crear la sala, reintenta', 'error'); return; }
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    G.channel = generateCode();
+    db.ref('rooms/' + G.channel).transaction(function(current) {
+        if (current !== null) return; // código ocupado → abortar
+        return {
+            state: {
+                hostId: G.myId,
+                hostOnline: true,
+                maxPlayers: G.maxPlayers,
+                roundTime: G.roundTime,
+                gamePhase: 'lobby',
+                isFirstRound: true,
+                rolesVersion: 0,
+                createdAt: firebase.database.ServerValue.TIMESTAMP // para limpieza de salas viejas
+            }
+        };
+    }).then(function(res) {
+        if (res.committed) {
+            initFirebase();
+        } else {
+            createRoomAtomic(attempts + 1);
+        }
+    }).catch(function(e) {
+        console.error('Error creando sala:', e);
+        toast('Error creando sala', 'error');
+    });
 }
 
 function joinRoom() {
@@ -575,21 +608,8 @@ function initFirebase() {
     if (G.isHost) {
         // Host watches raw votes node
         attachVotesListener();
-
-        // Initialise host room state
-        stateRef.set({
-            hostId: G.myId,
-            hostOnline: true,
-            maxPlayers: G.maxPlayers,
-            roundTime: G.roundTime,
-            gamePhase: 'lobby',
-            usedWords: G.usedWords,
-            scores: {},
-            isFirstRound: true,
-            rolesVersion: 0
-        });
-
-        // Remove host presence on disconnect
+        // El estado inicial de la sala ya lo escribió createRoomAtomic().
+        // Aquí solo se asume la responsabilidad del flag de presencia.
         stateRef.child('hostOnline').onDisconnect().set(false);
     }
 
