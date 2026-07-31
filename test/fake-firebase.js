@@ -86,7 +86,9 @@ class FakeDB {
     }
 
     _fire(l) {
-        const val = l.path === '.info/serverTimeOffset' ? 0 : deepClone(this._get(l.path.split('/').filter(Boolean)));
+        const val = l.path === '.info/serverTimeOffset' ? 0
+            : l.path === '.info/connected' ? true
+            : deepClone(this._get(l.path.split('/').filter(Boolean)));
         // async como el real (microtask)
         Promise.resolve().then(() => {
             if (this.listeners.includes(l)) l.fn({ val: () => val });
@@ -115,7 +117,9 @@ class FakeDB {
                 update: (v) => { db._update(pathArr, v); return Promise.resolve(); },
                 remove: () => { db._set(pathArr, null); return Promise.resolve(); },
                 once: (ev) => {
-                    const val = path === '.info/serverTimeOffset' ? 0 : deepClone(db._get(pathArr));
+                    const val = path === '.info/serverTimeOffset' ? 0
+                        : path === '.info/connected' ? true
+                        : deepClone(db._get(pathArr));
                     return Promise.resolve({ val: () => val });
                 },
                 on: (ev, fn) => {
