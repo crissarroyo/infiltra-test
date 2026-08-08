@@ -273,6 +273,16 @@ async function s8() {
     host.eval(`document.querySelectorAll('.category-item input').forEach(cb => cb.checked = cb.value === ${JSON.stringify(smallest)}); updateSelectedCategories();`);
     host.eval('distributeRoles()');
     await world.tick(1000);
+    // Regresión: la carta del PROPIO host debe refrescarse al cambiar palabra
+    host.eval('revealRole()');
+    await world.tick(200);
+    host.eval('skipWord()');
+    await world.tick(500);
+    const hostWordInState = db._get(['rooms', host.G().channel, 'state', 'roles', host.G().myId, 'word']);
+    check('S8 host ve su palabra nueva tras skipWord', host.G().myRole.word === hostWordInState,
+        JSON.stringify({ local: host.G().myRole.word, estado: hostWordInState }));
+    check('S8 carta del host re-oculta tras skipWord', host.G().roleRevealed === false && host.text('role-word') === '???',
+        host.text('role-word'));
     let resets = 0;
     const iters = Math.ceil(sizes[smallest] / 2) + 2;
     for (let i = 0; i < iters; i++) {
