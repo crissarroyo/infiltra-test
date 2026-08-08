@@ -5,11 +5,22 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 const FakeTimers = require('@sinonjs/fake-timers');
 
-const REPO = path.resolve(__dirname, '../beta');
+// Repo raíz: ../beta (arnés suelto junto al clon) o .. (dentro de test/)
+const REPO = fs.existsSync(path.resolve(__dirname, '../beta/js/game.js'))
+    ? path.resolve(__dirname, '../beta')
+    : path.resolve(__dirname, '..');
 const GAME_HTML = fs.readFileSync(path.join(REPO, 'game.html'), 'utf8')
     .replace(/<script[^>]*src=[^>]*><\/script>/g, '')   // sin scripts externos
     .replace(/<script[\s\S]*?<\/script>/g, '');          // sin inline (gtag)
 const GAME_JS = fs.readFileSync(path.join(REPO, 'js/game.js'), 'utf8');
+
+// Tamaños del DB de palabras, extraídos del fuente (los const del juego
+// no son visibles desde evals posteriores en jsdom)
+const DB_SIZES = (() => {
+    const m = GAME_JS.match(/const DB = \{[\s\S]*?\n\};/);
+    const obj = eval('(' + m[0].slice(11, -1) + ')');
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, v.length]));
+})();
 
 let clientSeq = 0;
 
@@ -110,4 +121,4 @@ async function drain() {
     await new Promise(r => setImmediate(r));
 }
 
-module.exports = { SimClient, World, drain };
+module.exports = { SimClient, World, drain, DB_SIZES };
