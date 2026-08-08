@@ -1,5 +1,9 @@
 /**
- * INFILTRA - Game Logic v2.0.0 (Definitive Edition)
+ * INFILTRA - Game Logic v2.1.0 (Definitive Edition)
+ *
+ * v2.1.0: base de palabras ampliada — 19 categorías, 481 palabras
+ * (7 categorías nuevas: Objetos, Lugares, Naturaleza, Tecnología,
+ * Dibujos Animados, Bebidas, Videojuegos).
  *
  * Base: Firebase RTDB Edition (estado de sala en rooms/{CODIGO},
  * onValue para sync, onDisconnect para presencia, QR dinámico,
@@ -59,18 +63,25 @@ const POINTS = {
 };
 
 const DB = {
-    "Animales": ["León", "Tigre", "Elefante", "Zebra", "Delfín", "Lobo", "Gorila", "Águila", "Jirafa", "Oso", "Zorro", "Panda", "Tiburón", "Canguro", "Hipopótamo", "Serpiente", "Cocodrilo", "Pájaro", "Mono", "Tortuga"],
-    "Comida": ["Pizza", "Tacos", "Sushi", "Hamburguesa", "Pasta", "Ensalada", "Helado", "Pollo", "Pescado", "Chocolate", "Empanadas", "Ramen", "Curry", "Paella", "Burrito", "Croissant", "Queso", "Arroz", "Sopa", "Tarta"],
-    "Países": ["México", "Japón", "Brasil", "España", "Francia", "Italia", "Alemania", "Australia", "Argentina", "Canadá", "China", "India", "Rusia", "Estados Unidos", "Reino Unido", "Sudáfrica", "Egipto", "Nueva Zelanda", "Corea del Sur", "Turquía"],
-    "Profesiones": ["Médico", "Abogado", "Ingeniero", "Profesor", "Chef", "Piloto", "Arquitecto", "Programador", "Fotógrafo", "Enfermero", "Diseñador", "Periodista", "Músico", "Actor", "Científico", "Veterinario", "Contador", "Psicólogo", "Bombero", "Policía"],
-    "Deportes": ["Fútbol", "Baloncesto", "Tenis", "Natación", "Boxeo", "Golf", "Voleibol", "Surf", "Ciclismo", "Atletismo", "Esquí", "Karate", "Béisbol", "Rugby", "Gimnasia", "Escalada", "Patinaje", "Hockey"],
-    "Ciudades": ["París", "Tokio", "Nueva York", "Londres", "Roma", "Berlín", "Madrid", "Dubai", "Barcelona", "México DF", "Sídney", "Río de Janeiro", "Los Ángeles", "Toronto", "Estambul", "Singapur", "Ámsterdam", "Seúl"],
-    "Frutas": ["Manzana", "Banana", "Naranja", "Uva", "Fresa", "Piña", "Mango", "Sandía", "Kiwi", "Melón", "Pera", "Durazno", "Cereza", "Limón", "Papaya", "Granada", "Coco", "Mora"],
-    "Vehículos": ["Coche", "Bicicleta", "Avión", "Barco", "Tren", "Helicóptero", "Motocicleta", "Camión", "Submarino", "Cohete", "Autobús", "Patineta", "Tractor", "Yate"],
-    "Instrumentos": ["Guitarra", "Piano", "Batería", "Violín", "Flauta", "Trompeta", "Saxofón", "Arpa", "Bajo", "Ukelele", "Acordeón", "Cello", "Clarinete", "Órgano"],
-    "Películas": ["Titanic", "Star Wars", "Avatar", "Frozen", "Shrek", "Batman", "Avengers", "Coco", "Inception", "The Matrix", "Jurassic Park", "Harry Potter", "Toy Story"],
-    "Colores": ["Rojo", "Azul", "Verde", "Amarillo", "Naranja", "Morado", "Rosa", "Negro", "Blanco", "Gris", "Turquesa", "Violeta", "Dorado", "Plateado"],
-    "Superhéroes": ["Superman", "Batman", "Spider-Man", "Wonder Woman", "Iron Man", "Captain America", "Thor", "Hulk", "Flash", "Aquaman", "Wolverine", "Deadpool"]
+    "Animales": ["León", "Tigre", "Elefante", "Zebra", "Delfín", "Lobo", "Gorila", "Águila", "Jirafa", "Oso", "Zorro", "Panda", "Tiburón", "Canguro", "Hipopótamo", "Serpiente", "Cocodrilo", "Pájaro", "Mono", "Tortuga", "Pingüino", "Camello", "Murciélago", "Pulpo", "Ballena", "Caballo", "Conejo", "Ardilla", "Flamenco", "Erizo", "Koala", "Búho"],
+    "Comida": ["Pizza", "Tacos", "Sushi", "Hamburguesa", "Pasta", "Ensalada", "Helado", "Pollo", "Pescado", "Chocolate", "Empanadas", "Ramen", "Curry", "Paella", "Burrito", "Croissant", "Queso", "Arroz", "Sopa", "Tarta", "Ceviche", "Lasaña", "Quesadilla", "Hot dog", "Donas", "Galletas", "Pozole", "Mole", "Tamales", "Elote", "Cereal", "Sándwich"],
+    "Países": ["México", "Japón", "Brasil", "España", "Francia", "Italia", "Alemania", "Australia", "Argentina", "Canadá", "China", "India", "Rusia", "Estados Unidos", "Reino Unido", "Sudáfrica", "Egipto", "Nueva Zelanda", "Corea del Sur", "Turquía", "Perú", "Chile", "Colombia", "Cuba", "Grecia", "Suiza", "Suecia", "Noruega", "Portugal", "Marruecos", "Tailandia", "Vietnam"],
+    "Profesiones": ["Médico", "Abogado", "Ingeniero", "Profesor", "Chef", "Piloto", "Arquitecto", "Programador", "Fotógrafo", "Enfermero", "Diseñador", "Periodista", "Músico", "Actor", "Científico", "Veterinario", "Contador", "Psicólogo", "Bombero", "Policía", "Dentista", "Carpintero", "Electricista", "Plomero", "Astronauta", "Granjero", "Peluquero", "Taxista", "Mesero", "Juez", "Panadero", "Cartero"],
+    "Deportes": ["Fútbol", "Baloncesto", "Tenis", "Natación", "Boxeo", "Golf", "Voleibol", "Surf", "Ciclismo", "Atletismo", "Esquí", "Karate", "Béisbol", "Rugby", "Gimnasia", "Escalada", "Patinaje", "Hockey", "Ajedrez", "Ping pong", "Bádminton", "Esgrima", "Judo", "Taekwondo", "Lucha libre", "Parkour", "Skate", "Buceo", "Cricket", "Remo"],
+    "Ciudades": ["París", "Tokio", "Nueva York", "Londres", "Roma", "Berlín", "Madrid", "Dubai", "Barcelona", "México DF", "Sídney", "Río de Janeiro", "Los Ángeles", "Toronto", "Estambul", "Singapur", "Ámsterdam", "Seúl", "Cancún", "Guadalajara", "Monterrey", "Miami", "Chicago", "Buenos Aires", "Lima", "Bogotá", "Praga", "Viena", "Atenas", "El Cairo"],
+    "Frutas": ["Manzana", "Banana", "Naranja", "Uva", "Fresa", "Piña", "Mango", "Sandía", "Kiwi", "Melón", "Pera", "Durazno", "Cereza", "Limón", "Papaya", "Granada", "Coco", "Mora", "Guayaba", "Maracuyá", "Higo", "Ciruela", "Mandarina", "Toronja", "Mamey", "Guanábana", "Tuna", "Frambuesa"],
+    "Vehículos": ["Coche", "Bicicleta", "Avión", "Barco", "Tren", "Helicóptero", "Motocicleta", "Camión", "Submarino", "Cohete", "Autobús", "Patineta", "Tractor", "Yate", "Ambulancia", "Metro", "Tranvía", "Globo aerostático", "Camioneta", "Grúa", "Limusina", "Carruaje", "Kayak", "Trineo"],
+    "Instrumentos": ["Guitarra", "Piano", "Batería", "Violín", "Flauta", "Trompeta", "Saxofón", "Arpa", "Bajo", "Ukelele", "Acordeón", "Cello", "Clarinete", "Órgano", "Tambor", "Maracas", "Pandereta", "Xilófono", "Armónica", "Gaita", "Banjo", "Marimba", "Trombón", "Castañuelas"],
+    "Películas": ["Titanic", "Star Wars", "Avatar", "Frozen", "Shrek", "Avengers", "Coco", "Inception", "The Matrix", "Jurassic Park", "Harry Potter", "Toy Story", "Los Increíbles", "Up", "Ratatouille", "Buscando a Nemo", "El Rey León", "Piratas del Caribe", "Volver al Futuro", "E.T.", "Moana", "Encanto", "Intensamente", "Kung Fu Panda", "Madagascar", "Cars"],
+    "Colores": ["Rojo", "Azul", "Verde", "Amarillo", "Naranja", "Morado", "Rosa", "Negro", "Blanco", "Gris", "Turquesa", "Violeta", "Dorado", "Plateado", "Beige", "Marfil", "Lavanda", "Cian"],
+    "Superhéroes": ["Superman", "Batman", "Spider-Man", "Wonder Woman", "Iron Man", "Captain America", "Thor", "Hulk", "Flash", "Aquaman", "Wolverine", "Deadpool", "Doctor Strange", "Pantera Negra", "Ant-Man", "Shazam", "Robin", "Linterna Verde", "Groot", "Capitana Marvel"],
+    "Objetos": ["Silla", "Espejo", "Reloj", "Paraguas", "Tijeras", "Almohada", "Escalera", "Martillo", "Cepillo de dientes", "Llaves", "Mochila", "Linterna", "Vela", "Peine", "Cuchara", "Escoba", "Ventilador", "Candado", "Maleta", "Lápiz", "Libreta", "Taza", "Sartén", "Control remoto"],
+    "Lugares": ["Playa", "Hospital", "Biblioteca", "Cine", "Supermercado", "Museo", "Aeropuerto", "Gimnasio", "Castillo", "Granja", "Desierto", "Selva", "Cueva", "Faro", "Estadio", "Circo", "Zoológico", "Escuela", "Oficina", "Panadería", "Parque de diversiones", "Iglesia", "Mercado"],
+    "Naturaleza": ["Montaña", "Río", "Cascada", "Arcoíris", "Tormenta", "Nube", "Luna", "Sol", "Estrella", "Bosque", "Isla", "Nieve", "Rayo", "Terremoto", "Glaciar", "Pantano", "Duna", "Coral", "Marea", "Volcán", "Aurora boreal", "Eclipse", "Cometa", "Manantial"],
+    "Tecnología": ["Celular", "Computadora", "Audífonos", "Dron", "Robot", "Impresora", "Tablet", "Cargador", "Wifi", "Batería portátil", "Pantalla", "Teclado", "Cámara", "Consola", "Memoria USB", "Satélite", "Antena", "Micrófono", "Bocina", "Router", "Videollamada", "Smartwatch"],
+    "Dibujos Animados": ["Bob Esponja", "Homero Simpson", "Goku", "Pikachu", "Doraemon", "Tom y Jerry", "Scooby-Doo", "Los Pitufos", "Mickey Mouse", "Bugs Bunny", "Garfield", "Popeye", "Dora la Exploradora", "Phineas y Ferb", "Gumball", "Naruto", "Minions", "Pato Donald", "Snoopy", "Winnie Pooh", "Peppa Pig", "Hora de Aventura"],
+    "Bebidas": ["Café", "Leche", "Jugo de naranja", "Limonada", "Horchata", "Agua mineral", "Refresco", "Malteada", "Smoothie", "Té helado", "Chocolate caliente", "Atole", "Ponche", "Agua de coco", "Capuchino", "Frappé", "Té verde", "Agua de jamaica"],
+    "Videojuegos": ["Mario Bros", "Zelda", "Minecraft", "Fortnite", "Pokémon", "Tetris", "Pac-Man", "Sonic", "FIFA", "Among Us", "Roblox", "Kirby", "Halo", "Angry Birds", "Candy Crush", "Mario Kart", "Animal Crossing", "Just Dance", "Plants vs Zombies", "Street Fighter"]
 };
 
 const AVATARS = [
