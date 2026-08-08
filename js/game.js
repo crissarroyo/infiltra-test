@@ -1670,6 +1670,14 @@ function skipWord() {
         starterPlayerId: G.starterPlayerId,
         usedWords:       G.usedWords,
         rolesVersion:    G.rolesVersion
+    }).catch(function(e) { console.error('Error cambiando palabra:', e); });
+    // El host no recibe su propio cambio de rolesVersion (ya lo tiene
+    // incrementado), así que refresca su carta localmente. Sin esto,
+    // el host seguía viendo la palabra/categoría anterior.
+    handleSkipWord({
+        roles:           G.fullRoles,
+        starterPlayerId: G.starterPlayerId,
+        usedWords:       G.usedWords
     });
 }
 
@@ -1678,6 +1686,11 @@ function handleSkipWord(msg) {
     G.starterPlayerId = msg.starterPlayerId;
     G.usedWords      = msg.usedWords || G.usedWords;
     if (G.fullRoles[G.myId]) G.myRole = G.fullRoles[G.myId];
+    if (G.isSpectator) {
+        updateSpectatorRoles();
+        toast('Palabra cambiada', 'info');
+        return;
+    }
     G.roleRevealed = false;
     const card = document.getElementById('role-card');
     if (card) card.className = 'role-card blurred';
