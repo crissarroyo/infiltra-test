@@ -33,6 +33,9 @@ v2.4.0 agrega: carta que se revela y se oculta, fin de partida para
 espectadores y todos (resumen, espera, carrera con el expulsado, nueva
 partida, host que se va en el final), reacciones y ajustes.
 
+v2.4.1 agrega: reacciones que se ven junto al nombre en la votación y
+en una línea fija, y aviso único si Firebase rechaza la reacción.
+
 Nota: el mock no sustituye una partida real contra el Firebase de
 producción (latencia, reglas de seguridad); esa verificación se hace
 en el GitHub Pages de test antes de promocionar.

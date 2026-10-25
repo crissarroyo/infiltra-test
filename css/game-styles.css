@@ -1893,7 +1893,8 @@ p {
     
     .role-card {
         width: 240px;
-        height: 320px;
+        height: auto;
+        min-height: 320px;
     }
     
     .role-icon {

@@ -883,8 +883,53 @@ async function s26() {
     check('S26 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
 }
 
+// ── S27: reacciones visibles para todos (v2.4.1) ────────────────
+async function s27() {
+    console.log('S27: reacciones junto al nombre, línea fija y error de escritura visible');
+    const { db, world } = freshWorld();
+    const { host, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+    distributeLastIsImpostor(host);
+    await world.tick(1000);
+    host.eval('startRound()');
+    await tickToVoting(world);
+    const beto = byName(all, 'Beto');
+    const caro = byName(all, 'Caro');
+    const caroId = idOf(all, 'Caro');
+    const badge = (c, id) => {
+        const btn = c.w.document.querySelector('.btn-vote[data-target="' + id + '"]');
+        const b = btn && btn.closest('.vote-item').querySelector('.row-reaction');
+        return b ? b.textContent : null;
+    };
+    const feed = (c) => (c.w.document.querySelector('#screen-voting .reaction-feed') || {}).textContent || '';
+    caro.eval("sendReaction('🤔')");
+    await world.tick(300);
+    check('S27 el emoji aparece junto al nombre en la votación de los demás', badge(host, caroId) === '🤔' && badge(beto, caroId) === '🤔', badge(host, caroId) + '/' + badge(beto, caroId));
+    check('S27 línea fija con quién reaccionó', feed(host).includes('Caro') && feed(host).includes('🤔') && feed(caro).includes('Tú'), feed(host) + ' | ' + feed(caro));
+    await world.tick(3200);
+    check('S27 el emoji junto al nombre se quita solo', badge(host, caroId) === null);
+    check('S27 la línea fija se queda', feed(host).includes('Caro'));
+    // Firebase rechaza la escritura (p. ej. reglas): se avisa una sola vez
+    beto.eval(`(function() {
+        const orig = G.db.ref.bind(G.db);
+        G.db.ref = function(p) {
+            const r = orig(p);
+            if (String(p || '').endsWith('/reaction')) r.set = function() { return Promise.reject(new Error('PERMISSION_DENIED')); };
+            return r;
+        };
+    })()`);
+    const toasts = () => Array.from(beto.w.document.querySelectorAll('.toast')).filter(t => /reacción/.test(t.textContent)).length;
+    beto.eval("sendReaction('😂')");
+    await world.tick(200);
+    check('S27 si Firebase rechaza la reacción se avisa', toasts() === 1, String(toasts()));
+    await world.tick(1300);
+    beto.eval("sendReaction('😱')");
+    await world.tick(200);
+    check('S27 el aviso sale una sola vez', toasts() === 1, String(toasts()));
+    check('S27 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
+}
+
 (async () => {
-    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26];
+    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27];
     for (const s of scenarios) {
         try { await s(); }
         catch (e) { results.push({ name: s.name + ' (excepción)', ok: false, detail: e.stack?.split('\n').slice(0, 3).join(' | ') }); console.log('  EXCEPTION in ' + s.name + ': ' + e.message); }

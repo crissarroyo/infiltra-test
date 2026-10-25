@@ -1,5 +1,9 @@
 /**
- * INFILTRA - Game Logic v2.4.0 (Definitive Edition)
+ * INFILTRA - Game Logic v2.4.1 (Definitive Edition)
+ *
+ * v2.4.1: narrador con las grabaciones de ElevenLabs (sin voz del
+ * navegador), reacciones visibles para todos, imagen de la palabra
+ * dentro de la carta y giro de la carta fluido en móvil.
  *
  * v2.4.0: ajustes (volúmenes, narrador, clics, vibración, animaciones),
  * narrador por ronda, reacciones rápidas, resumen e historial al final,
@@ -295,7 +299,6 @@ const ambient = { wanted: null, name: null, src: null, gain: null };
 
 function unlockAudio() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
-    unlockSpeech();
     if (!Ctx) return;
     try {
         if (!audioCtx) {
@@ -335,12 +338,12 @@ function loadSounds() {
     if (soundsRequested || !audioCtx || typeof fetch === 'undefined') return;
     soundsRequested = true;
     Object.keys(SOUND_FILES).forEach(function(name) {
-        decodeInto(soundBuffers, name, 'assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.4.0', function(n) {
+        decodeInto(soundBuffers, name, 'assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.4.1', function(n) {
             if (n === ambient.wanted) applyAmbient();
         });
     });
     NARRATOR_FILES.forEach(function(key) {
-        decodeInto(voiceBuffers, key, 'assets/sounds/voice/' + key + '.mp3?v=2.4.0');
+        decodeInto(voiceBuffers, key, 'assets/sounds/voice/' + key + '.mp3?v=2.4.1');
     });
 }
 
@@ -438,9 +441,10 @@ function ambientForScreen(id) {
 }
 
 // ── Narrador (v2.4.0) ────────────────────────────────────────────
-// Frases por momento de la partida. Si existe la grabación en
-// assets/sounds/voice/<clave>.mp3 (ElevenLabs) se usa; si no, la voz en
-// español del propio dispositivo. Las frases se encolan para no pisarse.
+// Frases por momento de la partida, grabadas con ElevenLabs en
+// assets/sounds/voice/<clave>.mp3. Sin grabación no se habla: la voz
+// sintética del navegador sonaba robótica y se quitó. Las frases se
+// encolan para no pisarse y el ambiente baja mientras suenan.
 const NARRATOR_LINES = {
     narr_roles:         'Revisen su rol, en secreto.',
     narr_round:         '¡Comienza la ronda!',
@@ -453,43 +457,17 @@ const NARRATOR_LINES = {
     narr_win_citizens:  '¡Los ciudadanos ganan!',
     narr_win_impostors: 'Los infiltrados, ganan.'
 };
-// Grabaciones disponibles en assets/sounds/voice/ (se llena al subir
-// los archivos de ElevenLabs; vacío = voz del dispositivo)
-const NARRATOR_FILES = [];
+// Grabaciones en assets/sounds/voice/ (todas las frases están grabadas;
+// una clave fuera de esta lista simplemente no se narra)
+const NARRATOR_FILES = Object.keys(NARRATOR_LINES);
 const voiceBuffers = {};
 const narratorQueue = [];
 let narratorBusy = false;
-let speechVoice = null;
-let speechUnlocked = false;
 
-function pickSpeechVoice() {
-    if (!('speechSynthesis' in window)) return null;
-    const voices = window.speechSynthesis.getVoices() || [];
-    const prefs = ['es-MX', 'es-US', 'es-419', 'es-ES'];
-    for (let i = 0; i < prefs.length; i++) {
-        const v = voices.find(function(x) { return x.lang && x.lang.replace('_', '-') === prefs[i]; });
-        if (v) return v;
-    }
-    return voices.find(function(x) { return x.lang && x.lang.toLowerCase().indexOf('es') === 0; }) || null;
-}
-
-// iOS solo deja hablar si la primera frase sale de un toque del usuario
-function unlockSpeech() {
-    if (speechUnlocked || !('speechSynthesis' in window)) return;
-    speechUnlocked = true;
-    try {
-        const u = new SpeechSynthesisUtterance(' ');
-        u.volume = 0;
-        window.speechSynthesis.speak(u);
-        speechVoice = pickSpeechVoice();
-        if (!speechVoice && window.speechSynthesis.addEventListener) {
-            window.speechSynthesis.addEventListener('voiceschanged', function() { speechVoice = pickSpeechVoice(); });
-        }
-    } catch (e) {}
-}
+function narratorAvailable() { return NARRATOR_FILES.length > 0; }
 
 function narrate(key, delayMs) {
-    if (!NARRATOR_LINES[key] || !G.settings.narrator || !G.soundEnabled) return;
+    if (!NARRATOR_LINES[key] || !G.settings.narrator || !G.soundEnabled || NARRATOR_FILES.indexOf(key) === -1) return;
     setTimeout(function() {
         if (narratorQueue.indexOf(key) !== -1) return;
         narratorQueue.push(key);
@@ -502,41 +480,21 @@ function nextNarration() {
     if (narratorBusy || narratorQueue.length === 0) return;
     if (!G.settings.narrator || !G.soundEnabled) { narratorQueue.length = 0; return; }
     const key = narratorQueue.shift();
-    const done = function() { narratorBusy = false; duckAmbient(false); nextNarration(); };
+    const buf = voiceBuffers[key];
+    if (!buf || !audioCtx || audioCtx.state !== 'running') { nextNarration(); return; }
     narratorBusy = true;
     duckAmbient(true);
     try {
-        const buf = voiceBuffers[key];
-        if (buf && audioCtx && audioCtx.state === 'running') {
-            const src = audioCtx.createBufferSource();
-            src.buffer = buf;
-            src.connect(voiceBus);
-            src.onended = done;
-            src.start();
-            return;
-        }
-        if ('speechSynthesis' in window) {
-            speechVoice = speechVoice || pickSpeechVoice();
-            if (!speechVoice) { done(); return; } // sin voz en español: mejor callar
-            const u = new SpeechSynthesisUtterance(NARRATOR_LINES[key]);
-            u.voice = speechVoice;
-            u.lang = speechVoice.lang;
-            u.rate = 0.98;
-            u.pitch = 0.85;
-            u.volume = Math.max(0, Math.min(1, G.settings.voice));
-            u.onend = done;
-            u.onerror = done;
-            window.speechSynthesis.speak(u);
-            setTimeout(function() { if (narratorBusy) done(); }, 6000); // red de seguridad
-            return;
-        }
-    } catch (e) {}
-    done();
+        const src = audioCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(voiceBus);
+        src.onended = function() { narratorBusy = false; duckAmbient(false); nextNarration(); };
+        src.start();
+    } catch (e) { narratorBusy = false; duckAmbient(false); }
 }
 
 function stopNarrator() {
     narratorQueue.length = 0;
-    try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
 }
 
 // En iPhone/iPad el interruptor de silencio apaga el audio web: se avisa
@@ -1092,10 +1050,11 @@ function renderSettings() {
     set('set-vibration', 'checked', G.settings.vibration);
     set('set-motion', 'checked', G.settings.reduceMotion);
     const voiceRow = document.getElementById('set-voice-row');
-    if (voiceRow) voiceRow.classList.toggle('disabled', !G.settings.narrator);
+    if (voiceRow) voiceRow.classList.toggle('disabled', !G.settings.narrator || !narratorAvailable());
+    const narrRow = document.getElementById('set-narrator');
+    if (narrRow) narrRow.disabled = !narratorAvailable();
     const note = document.getElementById('set-voice-note');
-    if (note) note.textContent = NARRATOR_FILES.length ? 'Voz grabada del narrador'
-        : (('speechSynthesis' in window) ? 'Usa la voz en español de tu dispositivo' : 'Tu navegador no tiene voz disponible');
+    if (note) note.textContent = narratorAvailable() ? 'Voz grabada con ElevenLabs' : 'Disponible al agregar las grabaciones';
 }
 
 function bindSettings() {
@@ -2445,9 +2404,15 @@ function handleAssign(msg) {
 // el infiltrado no (solo conoce la categoría). Colores usa una
 // muestra local; el resto se resuelve contra la API de Wikipedia con
 // títulos curados (window.WORD_IMAGE_TITLES). Sin imagen → no pasa nada.
+function setCardHasImage(on) {
+    const card = document.getElementById('role-card');
+    if (card) card.classList.toggle('has-word-image', !!on);
+}
+
 function hideRoleWordImage() {
     const box = document.getElementById('role-word-image');
     if (box) { box.innerHTML = ''; box.style.display = 'none'; }
+    setCardHasImage(false);
 }
 
 function updateRoleWordImage() {
@@ -2455,6 +2420,7 @@ function updateRoleWordImage() {
     if (!box) return;
     box.innerHTML = '';
     box.style.display = 'none';
+    setCardHasImage(false);
     if (!G.myRole || !G.roleRevealed) return;
     const word = G.myRole.word;
     if (!word || G.myRole.role === 'INFILTRADO' || word.indexOf('Categoría:') === 0) return;
@@ -2463,6 +2429,7 @@ function updateRoleWordImage() {
     if (swatch && (!cat || cat === 'Colores')) {
         box.innerHTML = '<div class="word-color-swatch" style="background:' + swatch + '"></div>';
         box.style.display = 'block';
+        setCardHasImage(true);
         return;
     }
     if (typeof fetch === 'undefined') return;
@@ -2490,11 +2457,12 @@ function renderWordImage(box, url) {
     const img = document.createElement('img');
     img.className = 'word-image';
     img.alt = '';
-    img.onerror = function() { box.style.display = 'none'; };
+    img.onerror = function() { box.style.display = 'none'; setCardHasImage(false); };
     img.src = url;
     box.innerHTML = '';
     box.appendChild(img);
     box.style.display = 'block';
+    setCardHasImage(true);
 }
 
 // La carta se revela y se oculta con cada toque (para taparla si alguien
@@ -3543,8 +3511,12 @@ function createReactionBars() {
         bar.innerHTML = REACTIONS.map(function(e) {
             return '<button type="button" class="btn-reaction" data-e="' + e + '" aria-label="Reaccionar ' + e + '">' + e + '</button>';
         }).join('');
+        const feed = document.createElement('div');
+        feed.className = 'reaction-feed';
+        feed.setAttribute('aria-live', 'polite');
         const group = card.querySelector('.btn-group');
         card.insertBefore(bar, group || null);
+        card.insertBefore(feed, group || null);
     });
     if (!document.getElementById('reaction-layer')) {
         const layer = document.createElement('div');
@@ -3570,7 +3542,15 @@ function sendReaction(e) {
     vibrate(10);
     G.db.ref('rooms/' + G.channel + '/players/' + G.myId + '/reaction')
         .set({ e: e, t: firebase.database.ServerValue.TIMESTAMP })
-        .catch(function() {});
+        .catch(function(err) {
+            // Antes el error se tragaba: si las reglas de Firebase no
+            // permiten el campo, que al menos se sepa
+            console.warn('Reacción rechazada por Firebase:', err);
+            if (!G.reactionErrorShown) {
+                G.reactionErrorShown = true;
+                toast('No se pudo enviar la reacción a los demás', 'error');
+            }
+        });
 }
 
 function processReactions(playersData, firstSnapshot) {
@@ -3585,17 +3565,47 @@ function processReactions(playersData, firstSnapshot) {
     });
 }
 
+// Tres formas de ver una reacción, para que no dependa de que la
+// animación corra bien: burbuja flotante (visible aunque no haya
+// animación), el emoji junto al nombre en la lista de votación y una
+// línea fija con las últimas reacciones bajo los botones.
+const recentReactions = [];
+
 function showReaction(id, e) {
     if (REACTIONS.indexOf(e) === -1) return;
+    const who = id === G.myId ? 'Tú' : (G.players[id]?.name || 'Jugador');
     const layer = document.getElementById('reaction-layer');
-    if (!layer) return;
-    const bubble = document.createElement('div');
-    bubble.className = 'reaction-bubble' + (id === G.myId ? ' mine' : '');
-    bubble.style.left = (8 + Math.random() * 74) + '%';
-    bubble.innerHTML = '<span class="reaction-emoji">' + e + '</span><span class="reaction-who">' + esc(id === G.myId ? 'Tú' : (G.players[id]?.name || 'Jugador')) + '</span>';
-    layer.appendChild(bubble);
-    while (layer.children.length > 12) layer.removeChild(layer.firstChild);
-    setTimeout(function() { bubble.remove(); }, 2800);
+    if (layer) {
+        const bubble = document.createElement('div');
+        bubble.className = 'reaction-bubble' + (id === G.myId ? ' mine' : '');
+        bubble.style.left = (8 + Math.random() * 74) + '%';
+        bubble.innerHTML = '<span class="reaction-emoji">' + e + '</span><span class="reaction-who">' + esc(who) + '</span>';
+        layer.appendChild(bubble);
+        while (layer.children.length > 12) layer.removeChild(layer.firstChild);
+        setTimeout(function() { bubble.remove(); }, 2600);
+    }
+    // Junto al nombre en la votación
+    document.querySelectorAll('.btn-vote').forEach(function(btn) {
+        if (btn.dataset.target !== id) return;
+        const name = btn.closest('.vote-item') && btn.closest('.vote-item').querySelector('.player-name');
+        if (!name) return;
+        const old = name.querySelector('.row-reaction');
+        if (old) old.remove();
+        const badge = document.createElement('span');
+        badge.className = 'row-reaction';
+        badge.textContent = e;
+        name.appendChild(badge);
+        setTimeout(function() { badge.remove(); }, 3000);
+    });
+    // Línea fija con las últimas tres
+    recentReactions.unshift(esc(who) + ' ' + e);
+    recentReactions.length = Math.min(recentReactions.length, 3);
+    document.querySelectorAll('.reaction-feed').forEach(function(feed) {
+        feed.innerHTML = recentReactions.join(' · ');
+        feed.classList.remove('flash');
+        void feed.offsetWidth;
+        feed.classList.add('flash');
+    });
 }
 
 // ── Confeti (v2.3.0) ─────────────────────────────────────────────

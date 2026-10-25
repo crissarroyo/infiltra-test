@@ -1,5 +1,5 @@
 /* ========================================
-   INFILTRA v2.4.0 — Capa de juego
+   INFILTRA v2.4.1 — Capa de juego
    Animaciones, profundidad y ventana de ayuda sobre game-styles.css.
    Misma paleta (oro sobre azul noche) y tipografías.
    ======================================== */
@@ -11,14 +11,22 @@
     initial-value: 1;
 }
 
-/* ---------- Fondo con profundidad ---------- */
-body.game-page {
+/* ---------- Fondo con profundidad ----------
+   Va en la capa fija de partículas y no en <body> con
+   background-attachment: fixed, que en móvil obliga a repintar toda
+   la pantalla en cada scroll y en cada animación. */
+body.game-page { background: var(--color-bg-primary); }
+
+body.game-page .particles-bg {
     background:
         radial-gradient(ellipse 80% 50% at 50% -10%, rgba(201, 162, 39, 0.10), transparent 60%),
-        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(139, 38, 53, 0.08), transparent 60%),
-        var(--color-bg-primary);
-    background-attachment: fixed;
+        radial-gradient(ellipse 60% 40% at 100% 100%, rgba(139, 38, 53, 0.08), transparent 60%);
 }
+
+/* El encabezado ya es casi opaco: el desenfoque de fondo no se nota
+   pero cuesta mucho en móvil mientras algo se anima debajo. */
+.main-header,
+.main-header.scrolled { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(10, 10, 15, 0.97); }
 
 /* ---------- Tarjetas con esquinas de "expediente" ---------- */
 .game-card {
@@ -124,10 +132,34 @@ body.game-page {
     to { opacity: 1; transform: none; }
 }
 
-/* ---------- Carta de rol: reverso y giro ---------- */
-.role-display { perspective: 1200px; }
+/* ---------- Carta de rol: reverso y giro ----------
+   Todo lo que se anima aquí es transform u opacity (lo hace la GPU sin
+   repintar). Nada de filter ni de transiciones de sombra: eso era lo
+   que dejaba el giro a pocos cuadros por segundo en el celular. */
+.role-card {
+    height: auto;
+    min-height: 380px;
+    padding: var(--space-xl) var(--space-md);
+    gap: var(--space-md);
+    /* Sin transición: el cambio de borde/fondo queda oculto por el giro
+       y una transición de color obligaba a repintar la carta cada cuadro */
+    transition: none;
+    will-change: transform;
+    contain: layout paint;
+}
 
-.role-card { transform-style: preserve-3d; }
+.role-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 65%);
+    opacity: 0;
+    pointer-events: none;
+    will-change: opacity;
+}
+
+.role-card.flip-reveal::before { animation: flipFlash 0.5s ease-out; }
 
 .role-card.blurred {
     filter: none;
@@ -169,19 +201,38 @@ body.game-page {
     50% { opacity: 1; }
 }
 
-.role-card.flip-reveal { animation: flipReveal 0.7s cubic-bezier(.2, .8, .3, 1.2) both; }
+.role-card.flip-reveal { animation: flipReveal 0.45s cubic-bezier(.2, .8, .3, 1.15) both; }
 
+/* Giro plano (escala en X): mismo efecto de carta que se voltea, sin 3D */
 @keyframes flipReveal {
-    0% { transform: rotateY(90deg) scale(0.92); filter: brightness(2); }
-    60% { transform: rotateY(-8deg) scale(1.03); filter: brightness(1.2); }
-    100% { transform: none; filter: none; }
+    0% { transform: scaleX(0.04) scaleY(0.96); }
+    65% { transform: scaleX(1.04) scaleY(1.01); }
+    100% { transform: none; }
 }
 
-.role-card.citizen { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3), 0 0 38px rgba(59, 130, 246, 0.28), 0 18px 40px rgba(0, 0, 0, 0.55); background: linear-gradient(180deg, rgba(59, 130, 246, 0.10), var(--color-bg-secondary) 55%); }
-.role-card.impostor { box-shadow: 0 0 0 1px rgba(166, 51, 68, 0.4), 0 0 42px rgba(166, 51, 68, 0.35), 0 18px 40px rgba(0, 0, 0, 0.55); background: linear-gradient(180deg, rgba(139, 38, 53, 0.18), var(--color-bg-secondary) 55%); }
-.role-card.charlatan { box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35), 0 0 38px rgba(124, 58, 237, 0.3), 0 18px 40px rgba(0, 0, 0, 0.55); background: linear-gradient(180deg, rgba(124, 58, 237, 0.12), var(--color-bg-secondary) 55%); }
+@keyframes flipFlash {
+    0% { opacity: 0.9; }
+    100% { opacity: 0; }
+}
 
-.role-card:not(.blurred) .role-icon-img { filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.6)); }
+.role-card.citizen { box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3), 0 0 26px rgba(59, 130, 246, 0.26), 0 14px 30px rgba(0, 0, 0, 0.5); background: linear-gradient(180deg, rgba(59, 130, 246, 0.10), var(--color-bg-secondary) 55%); }
+.role-card.impostor { box-shadow: 0 0 0 1px rgba(166, 51, 68, 0.4), 0 0 28px rgba(166, 51, 68, 0.32), 0 14px 30px rgba(0, 0, 0, 0.5); background: linear-gradient(180deg, rgba(139, 38, 53, 0.18), var(--color-bg-secondary) 55%); }
+.role-card.charlatan { box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.35), 0 0 26px rgba(124, 58, 237, 0.28), 0 14px 30px rgba(0, 0, 0, 0.5); background: linear-gradient(180deg, rgba(124, 58, 237, 0.12), var(--color-bg-secondary) 55%); }
+
+/* La imagen de la palabra siempre dentro de la carta: con imagen, el
+   ícono se achica y la carta crece lo justo en vez de desbordarse. */
+.role-card .role-word-image { margin: 0 auto; max-width: 100%; }
+.role-card .role-word-image .word-image { display: block; max-width: 200px; max-height: 104px; width: auto; height: auto; margin: 0 auto; }
+.role-card .word-color-swatch { width: 110px; height: 48px; }
+.role-card.has-word-image .role-icon { width: 84px; height: 84px; }
+.role-card.has-word-image .role-title { font-size: 1.7rem; }
+
+@media (max-width: 480px) {
+    .role-card { min-height: 320px; padding: var(--space-lg) var(--space-md); }
+    .role-card .role-word-image .word-image { max-width: 180px; max-height: 96px; }
+    .role-card.has-word-image .role-icon { width: 72px; height: 72px; }
+    .role-card.has-word-image .role-title { font-size: 1.4rem; }
+}
 
 /* ---------- Temporizador circular ---------- */
 .timer {
@@ -436,8 +487,7 @@ body.game-page {
 .help-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(5, 5, 9, 0.72);
-    backdrop-filter: blur(4px);
+    background: rgba(5, 5, 9, 0.82);
     animation: fadeOnly 0.25s ease both;
 }
 
@@ -656,14 +706,18 @@ body.help-open { overflow: hidden; }
 
 .reaction-bubble {
     position: absolute;
-    bottom: 70px;
+    bottom: 90px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    animation: floatUp 2.8s ease-out forwards;
+    /* Visible por sí misma: la animación solo le da movimiento. Sin
+       "forwards", si la animación no corre la burbuja se queda quieta
+       y visible hasta que el código la quita. */
+    animation: floatUp 3s ease-out;
+    will-change: transform, opacity;
 }
 
-.reaction-emoji { font-size: 2.6rem; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5)); }
+.reaction-emoji { font-size: 2.6rem; text-shadow: 0 6px 10px rgba(0, 0, 0, 0.5); }
 
 .reaction-who {
     margin-top: 2px;
@@ -680,10 +734,34 @@ body.help-open { overflow: hidden; }
 .reaction-bubble.mine .reaction-who { border-color: var(--color-accent-gold); color: var(--color-accent-gold-light); }
 
 @keyframes floatUp {
-    0% { transform: translateY(20px) scale(0.6); opacity: 0; }
-    12% { transform: translateY(0) scale(1.15); opacity: 1; }
+    0% { transform: translateY(20px) scale(0.6); opacity: 0.2; }
+    10% { transform: translateY(0) scale(1.15); opacity: 1; }
     25% { transform: translateY(-20px) scale(1); }
-    100% { transform: translateY(-46vh) scale(0.9); opacity: 0; }
+    85% { opacity: 1; }
+    100% { transform: translateY(-40vh) scale(0.9); opacity: 0; }
+}
+
+.row-reaction {
+    display: inline-block;
+    margin-left: 0.4rem;
+    font-size: 1.15rem;
+    animation: popIn 0.3s ease both;
+}
+
+.reaction-feed {
+    min-height: 1.4em;
+    margin-top: 0.35rem;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--color-text-secondary);
+}
+
+.reaction-feed:empty { display: none; }
+.reaction-feed.flash { animation: feedFlash 0.6s ease; }
+
+@keyframes feedFlash {
+    from { color: var(--color-accent-gold-light); }
+    to { color: var(--color-text-secondary); }
 }
 
 /* ---------- Número de ronda ---------- */
@@ -793,10 +871,11 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 }
 
 body.reduce-motion .confetti { display: none; }
-body.reduce-motion .reaction-bubble { animation: none !important; bottom: 90px; }
+body.reduce-motion .reaction-bubble { animation: none !important; }
 
 /* ---------- Movimiento reducido ---------- */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
     .confetti { display: none; }
+    .reaction-bubble { animation: none !important; }
 }
