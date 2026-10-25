@@ -928,8 +928,46 @@ async function s27() {
     check('S27 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
 }
 
+// ── S28: sonidos de ventanas y ambiente sin costura (v2.4.2) ─────
+async function s28() {
+    console.log('S28: abrir/cerrar ventanas suena una vez; el ambiente hace loop dentro del margen');
+    const { db, world } = freshWorld();
+    const { all } = await makeRoom(db, world, ['Ana', 'Beto']);
+    const beto = byName(all, 'Beto');
+    beto.eval(`window.__src = []; window.AudioContext = function() {
+        this.state = 'running'; this.currentTime = 0; this.destination = {};
+        this.resume = () => {};
+        const param = () => ({ value: 1, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {} });
+        this.createGain = () => ({ gain: param(), connect() {} });
+        this.createOscillator = () => ({ type: '', frequency: param(), connect() {}, start() {}, stop() {} });
+        this.createBufferSource = () => { const s = { connect() {}, stop() {}, start(when, off) { s.startedAt = off || 0; } }; window.__src.push(s); return s; };
+    };
+    // Archivos simulados: el ambiente del lobby trae margen (21 s), el de tensión no
+    window.fetch = (url) => Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(String(url)) });
+    window.AudioContext.prototype.decodeAudioData = function(data, ok) { ok({ duration: data.includes('ambient_lobby') ? 21 : (data.includes('ambient_tension') ? 3 : 0.3), name: data }); };
+    window.__snd = [];
+    const origPlay = playSound;
+    window.playSound = function(n) { window.__snd.push(n); return origPlay(n); };`);
+    beto.w.document.dispatchEvent(new beto.w.Event('pointerdown'));
+    await world.tick(100);
+    beto.click('btn-help');
+    beto.click('btn-settings');
+    beto.click('btn-settings');
+    const snd = beto.eval('window.__snd.join(",")');
+    check('S28 abrir ayuda, pasar a ajustes y cerrar: un sonido por acción', snd === 'open,open,close', snd);
+    // Ambiente: buffer de 21 s (0.5 + 20 + 0.5) → loop de 0.5 a 20.5
+    const lobbySrc = () => beto.eval("window.__src.filter(s => s.buffer && /ambient_lobby/.test(s.buffer.name)).pop()");
+    const src = lobbySrc();
+    check('S28 loop del ambiente dentro del margen', src && src.loop === true && src.loopStart === 0.5 && src.loopEnd === 20.5 && src.startedAt === 0.5, JSON.stringify(src));
+    beto.eval("setAmbient('tension')");
+    await world.tick(100);
+    const src2 = beto.eval("window.__src.filter(s => s.buffer && /ambient_tension/.test(s.buffer.name)).pop()");
+    check('S28 un loop sin margen se reproduce completo', src2 && src2.loop === true && src2.loopStart === undefined && src2.startedAt === 0, JSON.stringify(src2));
+    check('S28 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
+}
+
 (async () => {
-    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27];
+    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26, s27, s28];
     for (const s of scenarios) {
         try { await s(); }
         catch (e) { results.push({ name: s.name + ' (excepción)', ok: false, detail: e.stack?.split('\n').slice(0, 3).join(' | ') }); console.log('  EXCEPTION in ' + s.name + ': ' + e.message); }

@@ -1,5 +1,8 @@
 /**
- * INFILTRA - Game Logic v2.4.1 (Definitive Edition)
+ * INFILTRA - Game Logic v2.4.2 (Definitive Edition)
+ *
+ * v2.4.2: ambientes sin salto en la costura del loop y sonidos suaves
+ * al abrir/cerrar ventanas y al ocultar la carta (antes un whoosh fuerte).
  *
  * v2.4.1: narrador con las grabaciones de ElevenLabs (sin voz del
  * navegador), reacciones visibles para todos, imagen de la palabra
@@ -269,16 +272,22 @@ function applySettings() {
 // Si un archivo no carga, suena un tono sintetizado de respaldo. El
 // contexto se crea en el primer toque, como exigen los móviles.
 const SOUND_FILES = {
-    click: 'ui_click', whoosh: 'ui_whoosh', join: 'join', reveal: 'reveal',
+    click: 'ui_click', open: 'ui_open', close: 'ui_close', join: 'join', reveal: 'reveal',
     start: 'round_start', tick: 'tick', timeup: 'timeup', voting: 'voting',
     vote: 'vote', eliminated: 'eliminated', tie: 'tie', win: 'win', lose: 'lose',
     lobby: 'ambient_lobby', tension: 'ambient_tension'
 };
-const SOUND_VOLUME = { click: 0.14, tick: 0.5, whoosh: 0.4, join: 0.55, vote: 0.7 };
+const SOUND_VOLUME = { click: 0.14, open: 0.22, close: 0.2, tick: 0.5, join: 0.55, vote: 0.7 };
 const AMBIENT_VOLUME = 0.36;
+// Los ambientes traen medio segundo extra antes y después del ciclo de
+// 20 s (copia del final y del principio). El loop corre dentro de ese
+// tramo, lejos de los bordes del MP3: así no hay salto ni silencio en la
+// costura aunque el navegador agregue o recorte relleno del códec.
+const AMBIENT_LOOP = { pad: 0.5, len: 20 };
 const SYNTH_FALLBACK = {
     click:      [[620, 0.025]],
-    whoosh:     [[500, 0.08]],
+    open:       [[587, 0.05], [880, 0.07]],
+    close:      [[880, 0.05], [587, 0.07]],
     join:       [[988, 0.1], [1319, 0.15]],
     reveal:     [[523, 0.08], [784, 0.14]],
     start:      [[392, 0.1], [523, 0.1], [659, 0.18]],
@@ -338,12 +347,12 @@ function loadSounds() {
     if (soundsRequested || !audioCtx || typeof fetch === 'undefined') return;
     soundsRequested = true;
     Object.keys(SOUND_FILES).forEach(function(name) {
-        decodeInto(soundBuffers, name, 'assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.4.1', function(n) {
+        decodeInto(soundBuffers, name, 'assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.4.2', function(n) {
             if (n === ambient.wanted) applyAmbient();
         });
     });
     NARRATOR_FILES.forEach(function(key) {
-        decodeInto(voiceBuffers, key, 'assets/sounds/voice/' + key + '.mp3?v=2.4.1');
+        decodeInto(voiceBuffers, key, 'assets/sounds/voice/' + key + '.mp3?v=2.4.2');
     });
 }
 
@@ -411,13 +420,20 @@ function applyAmbient() {
     try {
         const src = audioCtx.createBufferSource();
         const gain = audioCtx.createGain();
-        src.buffer = soundBuffers[want];
+        const buf = soundBuffers[want];
+        src.buffer = buf;
         src.loop = true;
+        let offset = 0;
+        if (buf.duration >= AMBIENT_LOOP.len + AMBIENT_LOOP.pad * 2 - 0.01) {
+            src.loopStart = AMBIENT_LOOP.pad;
+            src.loopEnd = AMBIENT_LOOP.pad + AMBIENT_LOOP.len;
+            offset = AMBIENT_LOOP.pad;
+        }
         gain.gain.setValueAtTime(0, now);
         gain.gain.linearRampToValueAtTime(AMBIENT_VOLUME, now + 1.5);
         src.connect(gain);
         gain.connect(ambientBus);
-        src.start();
+        src.start(now, offset);
         ambient.src = src; ambient.gain = gain;
     } catch (e) {}
 }
@@ -1016,12 +1032,13 @@ function showScreen(id) {
 // la partida. Abrir una cierra la otra.
 const MODALS = { 'help-modal': 'btn-help', 'settings-modal': 'btn-settings' };
 
-function toggleModal(id, force) {
+function toggleModal(id, force, silent) {
     const modal = document.getElementById(id);
     if (!modal) return;
     const open = typeof force === 'boolean' ? force : modal.hidden;
     if (open === !modal.hidden) return;
-    if (open) Object.keys(MODALS).forEach(function(other) { if (other !== id) toggleModal(other, false); });
+    // Al abrir una se cierra la otra sin sonar (antes sonaban dos a la vez)
+    if (open) Object.keys(MODALS).forEach(function(other) { if (other !== id) toggleModal(other, false, true); });
     modal.hidden = !open;
     const anyOpen = Object.keys(MODALS).some(function(m) { const el = document.getElementById(m); return el && !el.hidden; });
     document.body.classList.toggle('help-open', anyOpen);
@@ -1032,7 +1049,7 @@ function toggleModal(id, force) {
     }
     if (open && id === 'settings-modal') renderSettings();
     unlockAudio();
-    playSound('whoosh');
+    if (!silent) playSound(open ? 'open' : 'close');
 }
 
 function toggleHelp(force) { toggleModal('help-modal', force); }
@@ -2509,7 +2526,7 @@ function hideRoleCard() {
     document.getElementById('role-word').textContent = '???';
     document.getElementById('role-instruction').textContent = 'Toca la carta para ver tu rol';
     hideRoleWordImage();
-    playSound('whoosh');
+    playSound('close');
     vibrate(15);
 }
 

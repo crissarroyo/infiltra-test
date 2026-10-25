@@ -36,6 +36,9 @@ partida, host que se va en el final), reacciones y ajustes.
 v2.4.1 agrega: reacciones que se ven junto al nombre en la votación y
 en una línea fija, y aviso único si Firebase rechaza la reacción.
 
+v2.4.2 agrega: un solo sonido al abrir, cambiar o cerrar ventanas y
+loop del ambiente dentro del margen del archivo.
+
 Nota: el mock no sustituye una partida real contra el Firebase de
 producción (latencia, reglas de seguridad); esa verificación se hace
 en el GitHub Pages de test antes de promocionar.
