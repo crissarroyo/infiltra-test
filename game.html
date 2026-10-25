@@ -11,14 +11,18 @@
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>INFILTRA - Jugar</title>
+    <link rel="icon" type="image/png" href="assets/icons/favicon-64.png">
+    <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+    <meta name="theme-color" content="#0a0a0f">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-    <link rel="stylesheet" href="css/game-styles.css?v=2.2.0">
-    <link rel="stylesheet" href="css/hex-avatars.css?v=2.2.0">
+    <link rel="stylesheet" href="css/game-styles.css?v=2.3.0">
+    <link rel="stylesheet" href="css/hex-avatars.css?v=2.3.0">
+    <link rel="stylesheet" href="css/game-fx.css?v=2.3.0">
 </head>
 <body class="game-page">
     <div class="particles-bg" id="particles"></div>
@@ -33,7 +37,7 @@
             <button class="btn-icon" id="btn-sound" title="Sonido">
                 <img src="assets/icons/icon-sound-on.png" alt="Sonido" class="btn-icon-img">
             </button>
-            <button class="btn-icon" id="btn-help" title="Ayuda">
+            <button class="btn-icon" id="btn-help" title="Ayuda" aria-controls="help-modal" aria-expanded="false">
                 <img src="assets/icons/icon-help.png" alt="Ayuda" class="btn-icon-img">
             </button>
         </div>
@@ -277,6 +281,7 @@
             
             <div id="screen-gameover" class="screen">
                 <div class="game-card">
+                    <div class="gameover-verdict" id="gameover-verdict"></div>
                     <div class="card-header">
                         <h1 id="gameover-title">¡JUEGO TERMINADO!</h1>
                         <p id="gameover-reason"></p>
@@ -333,40 +338,55 @@
                 </div>
             </div>
             
-            <div id="screen-help" class="screen">
-                <div class="game-card">
-                    <div class="card-header">
-                        <h1>CÓMO JUGAR</h1>
-                    </div>
-                    <div class="help-content">
-                        <p><strong>1. Crear/Unirse:</strong> Crea una sala o únete con un código de 4 letras.</p>
-                        <p><strong>2. Roles:</strong> Se asignan secretamente: Ciudadano, Infiltrado o Charlatán.</p>
-                        <p><strong>3. Rondas:</strong> Da pistas sobre la palabra sin revelarla.</p>
-                        <p><strong>4. Votar:</strong> Vota por quien creas que es el infiltrado.</p>
-                        <p><strong>5. Ganar:</strong> Ciudadanos ganan eliminando infiltrados. Infiltrados ganan si igualan en número.</p>
-                    </div>
-                    <div class="points-box" style="margin-top:1.5rem">
-                        <h4>Sistema de Puntos</h4>
-                        <ul>
-                            <li><span class="points-value positive">+15</span> Ciudadano sobrevive y gana</li>
-                            <li><span class="points-value positive">+7</span> Votar a un infiltrado</li>
-                            <li><span class="points-value negative">-3</span> Votar a un inocente</li>
-                            <li><span class="points-value positive">+30</span> Infiltrado sobrevive y gana</li>
-                            <li><span class="points-value positive">+5</span> Infiltrado sobrevive ronda</li>
-                            <li><span class="points-value positive">+25</span> Charlatán sobrevive y gana</li>
-                        </ul>
-                    </div>
-                    <div class="btn-group" style="margin-top:1.5rem">
-                        <button class="btn btn-secondary" id="btn-help-back">
-                            Volver
-                        </button>
-                    </div>
-                </div>
-            </div>
         </main>
     </div>
+    <!-- Ayuda (v2.3.0): ventana que abre y cierra el botón "?" -->
+    <div class="help-modal" id="help-modal" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
+        <div class="help-backdrop" data-close></div>
+        <div class="help-sheet">
+            <div class="help-head">
+                <h2 id="help-title">CÓMO JUGAR</h2>
+                <button class="help-close" type="button" data-close aria-label="Cerrar ayuda">&times;</button>
+            </div>
+            <div class="help-body">
+                <ol class="help-steps">
+                    <li><span class="step-num">1</span><div><strong>Crea o únete</strong><p>Crea una sala o entra con el código de 4 letras (o el QR).</p></div></li>
+                    <li><span class="step-num">2</span><div><strong>Recibe tu rol</strong><p>Toca tu carta en secreto. Nadie más debe verla.</p></div></li>
+                    <li><span class="step-num">3</span><div><strong>Da pistas</strong><p>Por turnos, di algo sobre la palabra sin revelarla.</p></div></li>
+                    <li><span class="step-num">4</span><div><strong>Vota</strong><p>Al acabar el tiempo, vota a quien creas el infiltrado. El más votado sale.</p></div></li>
+                    <li><span class="step-num">5</span><div><strong>Gana</strong><p>Ciudadanos: expulsen a todos los infiltrados. Infiltrados: igualen en número al resto.</p></div></li>
+                </ol>
+
+                <h3 class="help-section-title">Roles</h3>
+                <div class="help-roles">
+                    <div class="help-role citizen">
+                        <img src="assets/icons/icon-citizen.png" alt="">
+                        <div><strong>Ciudadano</strong><p>Conoce la palabra secreta.</p></div>
+                    </div>
+                    <div class="help-role impostor">
+                        <img src="assets/icons/icon-impostor.png" alt="">
+                        <div><strong>Infiltrado</strong><p>Solo conoce la categoría. Debe fingir.</p></div>
+                    </div>
+                    <div class="help-role charlatan">
+                        <img src="assets/icons/icon-charlatan.png" alt="">
+                        <div><strong>Charlatán</strong><p>Tiene otra palabra de la misma categoría y cree ser ciudadano.</p></div>
+                    </div>
+                </div>
+
+                <h3 class="help-section-title">Puntos</h3>
+                <ul class="help-points">
+                    <li><span class="points-value positive">+15</span> Ciudadano sobrevive y gana</li>
+                    <li><span class="points-value positive">+25</span> Charlatán sobrevive y gana</li>
+                    <li><span class="points-value positive">+7</span> Cada voto a un infiltrado</li>
+                    <li><span class="points-value negative">-3</span> Cada voto a un inocente</li>
+                    <li><span class="points-value positive">+30</span> Infiltrado sobrevive y gana</li>
+                    <li><span class="points-value positive">+5</span> Infiltrado, por ronda sobrevivida</li>
+                </ul>
+            </div>
+        </div>
+    </div>
     <div class="toast-container" id="toast-container"></div>
-    <script src="js/word-images.js?v=2.2.0"></script>
-    <script src="js/game.js?v=2.2.0"></script>
+    <script src="js/word-images.js?v=2.3.0"></script>
+    <script src="js/game.js?v=2.3.0"></script>
 </body>
 </html>

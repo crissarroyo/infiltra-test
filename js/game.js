@@ -1,5 +1,9 @@
 /**
- * INFILTRA - Game Logic v2.2.0 (Definitive Edition)
+ * INFILTRA - Game Logic v2.3.0 (Definitive Edition)
+ *
+ * v2.3.0: sonido con archivos (assets/sounds, Web Audio, ambiente por
+ * pantalla), ayuda en ventana que abre/cierra, carta con giro,
+ * temporizador circular, votos marcados, confeti y vibración.
  *
  * v2.2.0: revisión de bugs y congruencia con lo anunciado
  * ✓ Sonido real (Web Audio, sin archivos) con el botón de silencio
@@ -186,7 +190,6 @@ let G = {
     voteTimeout: null,
     spectatorTimerInterval: null,
     soundEnabled: true,
-    screenStack: [],
     roleRevealed: false,
     isFirstRound: true,
     roundStarting: false
@@ -215,12 +218,24 @@ function trueRoleOf(id) {
     return (G.trueRoles && G.trueRoles[id]) || (G.fullRoles[id] && G.fullRoles[id].role) || '';
 }
 
-// ── Sonido (v2.2.0) ──────────────────────────────────────────────
-// Efectos sintetizados con Web Audio (sin archivos que descargar).
-// El contexto se crea en el primer toque, como exigen los navegadores
-// móviles. Preferencia de silencio guardada en localStorage.
-let audioCtx = null;
-const SFX = {
+// ── Sonido (v2.3.0) ──────────────────────────────────────────────
+// Efectos y ambientes en assets/sounds/*.mp3 reproducidos con Web
+// Audio (mezcla, volumen y loops sin corte). Si un archivo no carga,
+// suena un tono sintetizado de respaldo. El contexto se crea en el
+// primer toque, como exigen los navegadores móviles; el silencio se
+// guarda en localStorage.
+const SOUND_FILES = {
+    click: 'ui_click', whoosh: 'ui_whoosh', join: 'join', reveal: 'reveal',
+    start: 'round_start', tick: 'tick', timeup: 'timeup', voting: 'voting',
+    vote: 'vote', eliminated: 'eliminated', tie: 'tie', win: 'win', lose: 'lose',
+    lobby: 'ambient_lobby', tension: 'ambient_tension'
+};
+const SOUND_VOLUME = { click: 0.35, tick: 0.6, whoosh: 0.5, join: 0.6 };
+const AMBIENT_VOLUME = 0.22;
+const SYNTH_FALLBACK = {
+    click:      [[900, 0.03]],
+    whoosh:     [[500, 0.08]],
+    join:       [[988, 0.1], [1319, 0.15]],
     reveal:     [[523, 0.08], [784, 0.14]],
     start:      [[392, 0.1], [523, 0.1], [659, 0.18]],
     tick:       [[880, 0.05]],
@@ -232,37 +247,147 @@ const SFX = {
     win:        [[523, 0.1], [659, 0.1], [784, 0.1], [1047, 0.3]],
     lose:       [[392, 0.18], [330, 0.18], [262, 0.4]]
 };
+let audioCtx = null;
+let masterGain = null;
+const soundBuffers = {};
+let soundsRequested = false;
+const ambient = { wanted: null, name: null, src: null, gain: null };
 
 function unlockAudio() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     try {
-        if (!audioCtx) audioCtx = new Ctx();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (!audioCtx) {
+            audioCtx = new Ctx();
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = G.soundEnabled ? 1 : 0;
+            masterGain.connect(audioCtx.destination);
+            maybeShowSilentHint();
+        }
+        if (audioCtx.state === 'suspended') {
+            const p = audioCtx.resume();
+            if (p && p.then) p.then(applyAmbient).catch(function() {});
+        }
+        loadSounds();
+        applyAmbient();
     } catch (e) { audioCtx = null; }
 }
 
+// Descarga y decodifica todos los sonidos una sola vez (≈0.9 MB)
+function loadSounds() {
+    if (soundsRequested || !audioCtx || typeof fetch === 'undefined') return;
+    soundsRequested = true;
+    Object.keys(SOUND_FILES).forEach(function(name) {
+        fetch('assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.3.0')
+            .then(function(r) { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+            .then(function(data) {
+                // Safari antiguo solo acepta la forma con callbacks
+                return new Promise(function(ok, fail) { audioCtx.decodeAudioData(data, ok, fail); });
+            })
+            .then(function(buf) {
+                soundBuffers[name] = buf;
+                if (name === ambient.wanted) applyAmbient();
+            })
+            .catch(function() { /* queda el tono de respaldo */ });
+    });
+}
+
 function playSound(name) {
-    // Con el contexto suspendido el reloj está congelado: las notas se
-    // acumularían y sonarían todas juntas al reanudarse.
-    if (!G.soundEnabled || !audioCtx || audioCtx.state !== 'running' || !SFX[name]) return;
+    // Con el contexto suspendido el reloj está congelado: los sonidos se
+    // acumularían y sonarían todos juntos al reanudarse.
+    if (!G.soundEnabled || !audioCtx || audioCtx.state !== 'running') return;
     try {
-        let t = audioCtx.currentTime;
-        SFX[name].forEach(function(note) {
-            const osc = audioCtx.createOscillator();
+        const buf = soundBuffers[name];
+        if (buf) {
+            const src = audioCtx.createBufferSource();
             const gain = audioCtx.createGain();
-            osc.type = 'triangle';
-            osc.frequency.value = note[0];
-            gain.gain.setValueAtTime(0.0001, t);
-            gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
-            gain.gain.exponentialRampToValueAtTime(0.0001, t + note[1]);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start(t);
-            osc.stop(t + note[1] + 0.02);
-            t += note[1] * 0.9;
-        });
+            src.buffer = buf;
+            gain.gain.value = SOUND_VOLUME[name] || 0.9;
+            src.connect(gain);
+            gain.connect(masterGain);
+            src.start();
+            return;
+        }
+        playSynth(name);
     } catch (e) { /* sin sonido no rompe el juego */ }
+}
+
+function playSynth(name) {
+    if (!SYNTH_FALLBACK[name]) return;
+    let t = audioCtx.currentTime;
+    SYNTH_FALLBACK[name].forEach(function(note) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = note[0];
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + note[1]);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(t);
+        osc.stop(t + note[1] + 0.02);
+        t += note[1] * 0.9;
+    });
+}
+
+// Ambiente de fondo en loop según la pantalla; cambia con fundido.
+function setAmbient(name) {
+    ambient.wanted = name || null;
+    applyAmbient();
+}
+
+function applyAmbient() {
+    if (!audioCtx || audioCtx.state !== 'running') return;
+    const want = G.soundEnabled ? ambient.wanted : null;
+    if (want === ambient.name && (!want || ambient.src)) return;
+    const now = audioCtx.currentTime;
+    if (ambient.src) {
+        const oldSrc = ambient.src, oldGain = ambient.gain;
+        oldGain.gain.cancelScheduledValues(now);
+        oldGain.gain.setValueAtTime(oldGain.gain.value, now);
+        oldGain.gain.linearRampToValueAtTime(0, now + 1.2);
+        setTimeout(function() { try { oldSrc.stop(); } catch (e) {} }, 1400);
+        ambient.src = null; ambient.gain = null;
+    }
+    ambient.name = want;
+    if (!want || !soundBuffers[want]) return; // se aplica al terminar de cargar
+    try {
+        const src = audioCtx.createBufferSource();
+        const gain = audioCtx.createGain();
+        src.buffer = soundBuffers[want];
+        src.loop = true;
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(AMBIENT_VOLUME, now + 1.5);
+        src.connect(gain);
+        gain.connect(masterGain);
+        src.start();
+        ambient.src = src; ambient.gain = gain;
+    } catch (e) {}
+}
+
+// Ambiente por pantalla: sala tranquila, partida tensa, final sin fondo
+function ambientForScreen(id) {
+    if (id === 'screen-gameover') return null;
+    if (id === 'screen-home' || id === 'screen-config' || id === 'screen-lobby') return 'lobby';
+    return 'tension';
+}
+
+// En iPhone/iPad el interruptor de silencio apaga el audio web: se avisa
+// una vez para que nadie piense que el juego no tiene sonido.
+function maybeShowSilentHint() {
+    const ios = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!ios || !G.soundEnabled) return;
+    try {
+        if (sessionStorage.getItem('infiltra_silent_hint')) return;
+        sessionStorage.setItem('infiltra_silent_hint', '1');
+    } catch (e) {}
+    setTimeout(function() { toast('¿Sin sonido? Quita el modo silencio del iPhone', 'info'); }, 600);
+}
+
+function vibrate(pattern) {
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
 }
 
 function updateSoundButton() {
@@ -349,6 +474,8 @@ function init() {
     setupRefreshProtection();
     try { G.soundEnabled = localStorage.getItem('infiltra_sound') !== 'off'; } catch (e) {}
     updateSoundButton();
+    // Ambiente de la pantalla inicial (suena tras el primer toque)
+    setAmbient(ambientForScreen((document.querySelector('.screen.active') || {}).id || 'screen-home'));
     // En móviles el gesto válido para el audio es touchend/click
     ['pointerdown', 'touchend', 'click', 'keydown'].forEach(function(ev) {
         document.addEventListener(ev, unlockAudio, { passive: true });
@@ -682,17 +809,29 @@ function bindEvents() {
     bind('btn-sound', function() {
         G.soundEnabled = !G.soundEnabled;
         try { localStorage.setItem('infiltra_sound', G.soundEnabled ? 'on' : 'off'); } catch (e) {}
+        if (masterGain) masterGain.gain.value = G.soundEnabled ? 1 : 0;
         updateSoundButton();
         unlockAudio();
-        playSound('vote');
+        applyAmbient();
+        playSound('click');
     });
-    bind('btn-help', function() {
-        const current = document.querySelector('.screen.active')?.id || 'screen-home';
-        if (current !== 'screen-help') G.screenStack.push(current);
-        showScreen('screen-help');
+    // Ayuda: el mismo botón abre y cierra la ventana
+    bind('btn-help', function() { toggleHelp(); });
+    const helpModal = document.getElementById('help-modal');
+    if (helpModal) helpModal.querySelectorAll('[data-close]').forEach(function(el) {
+        el.addEventListener('click', function() { toggleHelp(false); });
     });
-    bind('btn-help-back', function() {
-        showScreen(G.screenStack.pop() || 'screen-home');
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') toggleHelp(false);
+    });
+    // Clic de interfaz en botones y selecciones (los que tienen sonido
+    // propio, como votar o revelar, no lo duplican)
+    document.addEventListener('click', function(e) {
+        const el = e.target.closest && e.target.closest('button, .avatar-option, .frame-option-new, .category-item');
+        if (!el || el.disabled || el.id === 'btn-sound' || el.id === 'btn-help' || el.hasAttribute('data-close') ||
+            el.classList.contains('btn-vote')) return;
+        unlockAudio();
+        playSound('click');
     });
     const maxPlayersInput = document.getElementById('config-max-players');
     const impostorsInput = document.getElementById('config-impostors');
@@ -734,6 +873,25 @@ function showScreen(id) {
     } else {
         hidePlayersSidebar();
     }
+    setAmbient(ambientForScreen(id));
+}
+
+// Ventana de ayuda (v2.3.0): se abre y cierra con el botón "?", la X,
+// el fondo o Esc, sin cambiar de pantalla ni perder la partida.
+function toggleHelp(force) {
+    const modal = document.getElementById('help-modal');
+    if (!modal) return;
+    const open = typeof force === 'boolean' ? force : modal.hidden;
+    if (open === !modal.hidden) return;
+    modal.hidden = !open;
+    document.body.classList.toggle('help-open', open);
+    const btn = document.getElementById('btn-help');
+    if (btn) {
+        btn.classList.toggle('active', open);
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    unlockAudio();
+    playSound('whoosh');
 }
 
 function showConfig() {
@@ -923,7 +1081,7 @@ function initFirebase() {
     }
 
     // Show lobby immediately
-    document.getElementById('display-room-code').textContent = G.channel;
+    setRoomCode(G.channel);
     showScreen('screen-lobby');
     generateQR();
     if (G.isHost) {
@@ -1023,7 +1181,7 @@ function onStateChange(snapshot) {
         if (!G.waitingNextGame) {
             G.waitingNextGame = true;
             G.reconnecting = false;
-            document.getElementById('display-room-code').textContent = G.channel;
+            setRoomCode(G.channel);
             showScreen('screen-lobby');
             setLobbyNotice('Hay una partida en curso. Entrarás en la siguiente.');
         }
@@ -1088,7 +1246,7 @@ function onStateChange(snapshot) {
                     : null;
             }
             if (G.isHost) becomeHost(); // era host: reasumir hostOnline y listener de votos
-            document.getElementById('display-room-code').textContent = G.channel;
+            setRoomCode(G.channel);
             restoreScreenForPhase(state);
             renderPlayerList();
             updatePlayersSidebar();
@@ -1103,7 +1261,7 @@ function onStateChange(snapshot) {
                     handleBackToLobbyFromState(state);
                 } else {
                     // First arrival — show lobby
-                    document.getElementById('display-room-code').textContent = G.channel;
+                    setRoomCode(G.channel);
                     renderPlayerList();
                 }
                 break;
@@ -1122,6 +1280,7 @@ function onStateChange(snapshot) {
                 // Votación nueva: quien sea host ahora debe poder publicar
                 // (un ex-host conservaba el flag de una ronda anterior).
                 G.resultsPublished = false;
+                G.myVoteTarget = null;
                 // Reset local vote state and show voting screen
                 G.votes       = state.votes || {};
                 G.votedPlayers = new Set(arrayFromFirebase(state.votedPlayers));
@@ -1168,9 +1327,8 @@ function onStateChange(snapshot) {
         if (G.votedPlayers.has(G.myId)) {
             G.hasVotedThisRound = true;
             document.querySelectorAll('.btn-vote').forEach(btn => btn.disabled = true);
-            const statusEl = document.getElementById('vote-status');
-            if (statusEl) statusEl.textContent = 'Voto registrado. Esperando...';
         }
+        updateVoteProgress();
     } else if (newPhase === 'lobby') {
         // Config update in lobby
         renderPlayerList();
@@ -1184,6 +1342,9 @@ function onStateChange(snapshot) {
 function onPlayersChange(snapshot) {
     const playersData = snapshot.val() || {};
     const newIds = Object.keys(playersData);
+    const firstSnapshot = !G.playersLoaded;
+    G.playersLoaded = true;
+    let someoneJoined = false;
 
     // Sala llena (solo host): también con la partida en curso, para que
     // quien espera la siguiente no exceda el máximo. Se cuentan solo los
@@ -1237,6 +1398,7 @@ function onPlayersChange(snapshot) {
         }
         // Volvió online → cancelar eliminación pendiente
         if (G.offlineTimers[id]) { clearTimeout(G.offlineTimers[id]); delete G.offlineTimers[id]; }
+        if (!firstSnapshot && id !== G.myId && !G.players[id] && G.gamePhase === 'lobby') someoneJoined = true;
         G.players[id] = {
             name:   p.name   || id.substring(0, 8),
             avatar: p.avatar || 'avatar-01',
@@ -1253,6 +1415,7 @@ function onPlayersChange(snapshot) {
         scheduleHostClaim();
     }
 
+    if (someoneJoined) playSound('join');
     renderPlayerList();
     updatePlayersSidebar();
     updateRolePlayersList();
@@ -1497,6 +1660,8 @@ function renderPlayerList() {
     const playerIds = Object.keys(G.players).sort((a, b) => (G.scores[b] || 0) - (G.scores[a] || 0));
     if (countEl) countEl.textContent = playerIds.length + '/' + G.maxPlayers;
 
+    // Quien aparece por primera vez entra con animación
+    const seen = G.renderedPlayers || (G.renderedPlayers = new Set());
     let headerHtml = '<div class="player-list-score-header"><span>Jugador</span><span>Puntos</span></div>';
     list.innerHTML = headerHtml + playerIds.map(function(id, index) {
         const p = G.players[id];
@@ -1514,12 +1679,14 @@ function renderPlayerList() {
             ? '<button class="btn-kick" data-kick="' + esc(id) + '" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>'
             : '';
 
-        return '<div class="player-item" data-player-id="' + esc(id) + '">' + rankHtml +
+        return '<div class="player-item' + (seen.has(id) ? '' : ' is-new') + '" data-player-id="' + esc(id) + '">' + rankHtml +
             '<div class="player-avatar">' + renderHexAvatar(id, 40) + '</div>' +
             '<div class="player-info"><div class="player-name">' + esc(p.name) + (isMe ? ' (Tú)' : '') + '</div>' +
             (isHostPlayer ? '<div class="player-tag">Host</div>' : '') + '</div>' +
             '<div class="player-score">' + (Number(score) || 0) + '</div>' + kickBtn + '</div>';
     }).join('');
+
+    playerIds.forEach(function(id) { seen.add(id); });
 
     list.querySelectorAll('.btn-kick').forEach(function(btn) {
         btn.onclick = function() { kickPlayer(btn.dataset.kick); };
@@ -2080,7 +2247,14 @@ function revealRole() {
     document.getElementById('role-word').textContent  = G.myRole.word;
     document.getElementById('role-instruction').textContent = 'Memoriza tu información';
     const roleClass = roleClassOf(G.myRole.role);
-    if (card) card.classList.add(roleClass);
+    if (card) {
+        card.classList.add(roleClass);
+        // Animación de giro (se reinicia si se vuelve a revelar)
+        card.classList.remove('flip-reveal');
+        void card.offsetWidth;
+        card.classList.add('flip-reveal');
+    }
+    vibrate(30);
     updateRoleWordImage();
     showPointsReminder();
     saveSession(); // conservar roleRevealed para restaurar tras F5
@@ -2175,7 +2349,9 @@ function handleStartRound(msg) {
     if (btnSkip)  btnSkip.style.display = 'none';
 
     const starterName = G.players[G.starterPlayerId]?.name || 'Alguien';
+    toggleHelp(false);
     playSound('start');
+    vibrate(80);
 
     if (G.isSpectator) {
         updateSpectatorHostControls(); // oculta Iniciar/Cambiar palabra
@@ -2205,8 +2381,8 @@ function startTimer() {
     if (G.timerInterval) clearInterval(G.timerInterval);
     const timer = document.getElementById('timer');
     if (!timer || !G.roundEndTime) return;
-    timer.style.display = 'block';
-    timer.classList.remove('warning');
+    timer.style.display = 'flex';
+    timer.classList.remove('warning', 'done');
     document.getElementById('wait-message').style.display = 'none';
     document.getElementById('points-box').style.display  = 'none';
     let fired = false;
@@ -2214,6 +2390,7 @@ function startTimer() {
     const tick = function() {
         const remaining = Math.max(0, Math.ceil((G.roundEndTime - serverNow()) / 1000));
         updateTimerDisplay(remaining);
+        setTimerRing(timer, remaining, G.roundTime || 60);
         if (remaining <= 10) timer.classList.add('warning');
         if (remaining > 0 && remaining <= 5 && remaining !== lastBeep) { lastBeep = remaining; playSound('tick'); }
         if (remaining <= 0 && !fired) {
@@ -2221,8 +2398,9 @@ function startTimer() {
             clearInterval(G.timerInterval);
             G.timerInterval = null;
             timer.textContent = '¡TIEMPO!';
+            timer.classList.add('done');
             playSound('timeup');
-            if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+            vibrate([500, 200, 500]);
             hostOpenVoting();
             // Los no-host esperan el cambio de fase vía onStateChange
         }
@@ -2269,6 +2447,12 @@ function startSpectatorTimer() {
     G.spectatorTimerInterval = setInterval(tick, 500);
 }
 
+// Anillo del temporizador: --p va de 1 (lleno) a 0 (vacío)
+function setTimerRing(el, remaining, total) {
+    if (!el) return;
+    el.style.setProperty('--p', Math.max(0, Math.min(1, remaining / (total || 1))).toFixed(3));
+}
+
 function updateTimerDisplay(seconds) {
     if (seconds < 0) seconds = 0;
     const mins = Math.floor(seconds / 60);
@@ -2281,7 +2465,9 @@ function updateTimerDisplay(seconds) {
 function startVoting() {
     if (G.timerInterval) clearInterval(G.timerInterval);
     hideStarterBanner();
+    toggleHelp(false);
     playSound('voting');
+    vibrate(60);
     if (G.isSpectator) {
         const specStatus = document.getElementById('spectator-status');
         if (specStatus) specStatus.textContent = 'Votación...';
@@ -2319,22 +2505,34 @@ function renderVotingList() {
     // FIX v2: los botones se deshabilitan si YO ya voté (antes se
     // deshabilitaba el botón de quien había votado, que es otra cosa)
     const iVoted = G.hasVotedThisRound || G.votedPlayers.has(G.myId);
-    list.innerHTML = votable.map(function(id) {
-        return '<div class="vote-item">' +
+    const myTarget = (G.voteTargets || {})[G.myId] || G.myVoteTarget;
+    list.innerHTML = votable.map(function(id, i) {
+        const mine = iVoted && id === myTarget;
+        return '<div class="vote-item' + (mine ? ' my-vote' : '') + '" style="animation-delay:' + (i * 60) + 'ms">' +
             '<div class="vote-avatar">' + renderHexAvatar(id, 48) + '</div>' +
             '<div class="player-info"><div class="player-name">' + esc(G.players[id]?.name || 'Jugador') + '</div></div>' +
-            '<button class="btn-vote' + (iVoted ? ' voted' : '') + '" data-target="' + esc(id) + '"' +
+            '<button class="btn-vote' + (mine ? ' voted' : '') + '" data-target="' + esc(id) + '"' +
             (iVoted ? ' disabled' : '') + '>' +
-            (iVoted ? 'Votado' : 'Votar') + '</button></div>';
+            (mine ? 'Tu voto' : 'Votar') + '</button></div>';
     }).join('');
     if (!iVoted) {
         list.querySelectorAll('.btn-vote').forEach(function(btn) {
             btn.onclick = function() { sendVote(btn.dataset.target, btn); };
         });
-    } else {
-        const voteStatus = document.getElementById('vote-status');
-        if (voteStatus) voteStatus.textContent = 'Voto registrado. Esperando...';
     }
+    updateVoteProgress();
+}
+
+// "Voto registrado · 2/4 han votado" (o la instrucción si aún no vota)
+function updateVoteProgress() {
+    const voteStatus = document.getElementById('vote-status');
+    if (!voteStatus || G.isSpectator) return;
+    const iVoted = G.hasVotedThisRound || G.votedPlayers.has(G.myId);
+    const voters = Array.from(G.votedPlayers).filter(function(v) { return G.activePlayers.includes(v); }).length;
+    const total = G.activePlayers.length;
+    voteStatus.textContent = iVoted
+        ? 'Voto registrado · ' + Math.max(voters, 1) + '/' + total + ' han votado'
+        : 'Selecciona a quién expulsar · ' + voters + '/' + total + ' han votado';
 }
 
 // Timer de voto universal (v1.1.0) sobre timestamp de servidor:
@@ -2347,6 +2545,8 @@ function startUniversalVoteTimer() {
     const updateTimer = function() {
         const remaining = Math.max(0, Math.ceil((G.voteEndTime - serverNow()) / 1000));
         display.textContent = '00:' + remaining.toString().padStart(2, '0');
+        setTimerRing(display, remaining, 30);
+        display.classList.toggle('warning', remaining <= 10);
         if (remaining <= 0) {
             clearInterval(G.voteTimerInterval);
             G.voteTimerInterval = null;
@@ -2381,18 +2581,24 @@ function sendVote(targetId, button) {
     if (!G.db || G.eliminated.includes(targetId) || !G.activePlayers.includes(targetId) || G.hasVotedThisRound) return;
     if (G.voteEndTime && serverNow() >= G.voteEndTime) { toast('Tiempo agotado', 'warning'); return; }
     G.hasVotedThisRound = true;
+    G.myVoteTarget = targetId;
     playSound('vote');
+    vibrate(40);
     // Each player writes their own vote to Firebase (clave propia → sin conflicto)
     G.db.ref('rooms/' + G.channel + '/votes/' + G.myId).set(targetId)
         .catch(function(e) { console.error('Error registrando voto:', e); });
+    if (!button) {
+        button = Array.from(document.querySelectorAll('.btn-vote')).find(function(btn) { return btn.dataset.target === targetId; });
+    }
     if (button) {
         button.classList.add('voted');
-        button.textContent = 'Votado';
+        button.textContent = 'Tu voto';
         button.disabled = true;
+        const item = button.closest('.vote-item');
+        if (item) item.classList.add('my-vote');
     }
     document.querySelectorAll('.btn-vote').forEach(function(btn) { btn.disabled = true; });
-    const voteStatus = document.getElementById('vote-status');
-    if (voteStatus) voteStatus.textContent = 'Voto registrado. Esperando...';
+    updateVoteProgress();
 }
 
 // ── Results ──────────────────────────────────────────────────────
@@ -2515,10 +2721,12 @@ function showYouEliminatedOverlay(role) {
     overlay.id = 'you-eliminated-overlay';
     overlay.className = 'you-eliminated-overlay';
     overlay.innerHTML = '<div class="you-eliminated-message">' +
-        '<h1>HAS SIDO EXPULSADO</h1>' +
-        '<p>Eras ' + esc(role) + '</p>' +
+        '<h1 class="stamp">EXPULSADO</h1>' +
+        '<p>Eras <strong class="role-' + roleClassOf(role) + '">' + esc(role) + '</strong></p>' +
+        '<p class="you-eliminated-sub">Sigues en la sala como espectador</p>' +
         '</div>';
     document.body.appendChild(overlay);
+    vibrate([80, 40, 120]);
 }
 
 function hideYouEliminatedOverlay() {
@@ -2748,7 +2956,19 @@ function handleGameOver(msg) {
     document.getElementById('gameover-reason').textContent = msg.reason;
     document.getElementById('gameover-icon').src = msg.winner === 'INFILTRADOS' ? ICONS.impostor : ICONS.celebrate;
     const iAmImpostor = trueRoleOf(G.myId) === 'INFILTRADO';
-    playSound((msg.winner === 'INFILTRADOS') === iAmImpostor ? 'win' : 'lose');
+    const iWon = (msg.winner === 'INFILTRADOS') === iAmImpostor;
+    playSound(iWon ? 'win' : 'lose');
+    const card = document.querySelector('#screen-gameover .game-card');
+    if (card) {
+        card.classList.toggle('winner-impostors', msg.winner === 'INFILTRADOS');
+        card.classList.toggle('winner-citizens', msg.winner !== 'INFILTRADOS');
+    }
+    const verdict = document.getElementById('gameover-verdict');
+    if (verdict) {
+        verdict.textContent = iWon ? '¡VICTORIA!' : 'DERROTA';
+        verdict.className = 'gameover-verdict ' + (iWon ? 'won' : 'lost');
+    }
+    if (iWon) launchConfetti(msg.winner === 'INFILTRADOS' ? ['#8b2635', '#c9a227', '#e8e8e8'] : ['#c9a227', '#3b82f6', '#e8e8e8', '#238c4e']);
 
     const scoresList = document.getElementById('final-scores');
     if (!scoresList) return;
@@ -2873,8 +3093,20 @@ function exitGame() {
     G.prevPhase = null;
     G.rolesVersion = 0;
     G.resultsPublished = false;
+    G.playersLoaded = false;
+    G.renderedPlayers = new Set();
     resetGameState();
     showScreen('screen-home');
+}
+
+// Código de sala en fichas, una letra por ficha
+function setRoomCode(code) {
+    const el = document.getElementById('display-room-code');
+    if (!el) return;
+    el.setAttribute('aria-label', 'Código de sala ' + (code || ''));
+    el.innerHTML = String(code || '----').split('').map(function(c, i) {
+        return '<span class="code-tile" style="animation-delay:' + (i * 70) + 'ms">' + esc(c) + '</span>';
+    }).join('');
 }
 
 // Aviso en la sala de espera (p. ej. "partida en curso"); vacío = oculto
@@ -2923,6 +3155,29 @@ function updateSpectatorVotes() {
             '<img src="' + statusIcon + '" alt="" class="player-status-icon">' +
             '</div>';
     }).join('');
+}
+
+// ── Confeti (v2.3.0) ─────────────────────────────────────────────
+// Piezas con CSS (sin librerías); se limpian solas.
+function launchConfetti(colors) {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const old = document.getElementById('confetti');
+    if (old) old.remove();
+    const box = document.createElement('div');
+    box.id = 'confetti';
+    box.className = 'confetti';
+    for (let i = 0; i < 70; i++) {
+        const piece = document.createElement('i');
+        piece.style.left = (Math.random() * 100) + '%';
+        piece.style.background = colors[i % colors.length];
+        piece.style.animationDelay = (Math.random() * 0.8) + 's';
+        piece.style.animationDuration = (2.2 + Math.random() * 1.6) + 's';
+        piece.style.setProperty('--drift', ((Math.random() - 0.5) * 160) + 'px');
+        piece.style.setProperty('--spin', (Math.random() * 720 - 360) + 'deg');
+        box.appendChild(piece);
+    }
+    document.body.appendChild(box);
+    setTimeout(function() { box.remove(); }, 4800);
 }
 
 // ── Toast ────────────────────────────────────────────────────────

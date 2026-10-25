@@ -693,8 +693,44 @@ async function s22() {
     check('S22 sin errores JS', rest.every(c => c.errors.length === 0), JSON.stringify(rest.map(c => c.errors).flat()));
 }
 
+// ── S23: ayuda como ventana y voto propio marcado ──────────────
+async function s23() {
+    console.log('S23: ayuda abre/cierra con el mismo botón; voto propio marcado');
+    const { db, world } = freshWorld();
+    const { host, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+    const beto = byName(all, 'Beto');
+    const modal = () => beto.w.document.getElementById('help-modal');
+    check('S23 ayuda cerrada al inicio', modal().hidden === true);
+    beto.click('btn-help');
+    check('S23 primer toque abre', modal().hidden === false && beto.w.document.getElementById('btn-help').classList.contains('active'));
+    check('S23 la pantalla de fondo no cambia', beto.screen() === 'screen-lobby', beto.screen());
+    beto.click('btn-help');
+    check('S23 segundo toque cierra', modal().hidden === true && !beto.w.document.getElementById('btn-help').classList.contains('active'));
+    beto.click('btn-help');
+    beto.w.document.dispatchEvent(new beto.w.KeyboardEvent('keydown', { key: 'Escape' }));
+    check('S23 Esc cierra', modal().hidden === true);
+    beto.click('btn-help');
+    beto.w.document.querySelector('#help-modal .help-backdrop').click();
+    check('S23 tocar el fondo cierra', modal().hidden === true);
+    beto.click('btn-help');
+    distributeLastIsImpostor(host);
+    await world.tick(1000);
+    host.eval('startRound()');
+    await world.tick(500);
+    check('S23 la ayuda se cierra sola al iniciar la ronda', modal().hidden === true);
+    await tickToVoting(world);
+    const target = idOf(all, 'Caro');
+    const btn = Array.from(beto.w.document.querySelectorAll('.btn-vote')).find(b => b.dataset.target === target);
+    btn.click();
+    await world.tick(300);
+    const item = btn.closest('.vote-item');
+    check('S23 voto propio marcado', item.classList.contains('my-vote') && btn.textContent === 'Tu voto', btn.textContent);
+    check('S23 progreso de votos visible', /han votado/.test(beto.text('vote-status')), beto.text('vote-status'));
+    check('S23 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
+}
+
 (async () => {
-    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22];
+    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23];
     for (const s of scenarios) {
         try { await s(); }
         catch (e) { results.push({ name: s.name + ' (excepción)', ok: false, detail: e.stack?.split('\n').slice(0, 3).join(' | ') }); console.log('  EXCEPTION in ' + s.name + ': ' + e.message); }

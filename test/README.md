@@ -26,6 +26,9 @@ con la ronda vencida, nombres con HTML, último infiltrado desconectado,
 sala inexistente y límites de configuración, sonido y silencio, y
 jugador en espera que no hereda el host a mitad de partida.
 
+v2.3.0 agrega: ayuda que abre y cierra con el mismo botón (también
+con Esc y el fondo) y voto propio marcado con progreso de votos.
+
 Nota: el mock no sustituye una partida real contra el Firebase de
 producción (latencia, reglas de seguridad); esa verificación se hace
 en el GitHub Pages de test antes de promocionar.
