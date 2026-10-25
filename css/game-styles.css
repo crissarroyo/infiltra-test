@@ -393,13 +393,6 @@ p {
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
 }
 
-.btn-img {
-    width: 24px;
-    height: 24px;
-    object-fit: contain;
-    filter: none;
-}
-
 .btn-primary {
     background: var(--color-accent-gold);
     color: var(--color-bg-primary);
@@ -722,22 +715,6 @@ p {
     font-weight: bold;
     box-shadow: var(--shadow-sm);
     z-index: 2;
-}
-
-.avatar-img-container {
-    width: 100%;
-    height: 100%;
-    aspect-ratio: 1 / 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 4px;
-    overflow: hidden;
-}
-.avatar-img-container img {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: contain !important;
 }
 
 /* ----------------------------------------
@@ -1510,20 +1487,6 @@ p {
     gap: var(--space-sm);
 }
 
-.btn-small {
-    padding: var(--space-xs) var(--space-sm);
-    background: var(--color-steel-dark);
-    color: var(--color-text-secondary);
-    border-radius: var(--radius-sm);
-    font-size: 0.75rem;
-    transition: all var(--transition-fast);
-}
-
-.btn-small:hover {
-    background: var(--color-steel);
-    color: var(--color-text-primary);
-}
-
 .categories-list {
     max-height: 200px;
     overflow-y: auto;
@@ -1554,26 +1517,6 @@ p {
 /* ----------------------------------------
    Game Over (FIX: Ganador grande y centrado, resumen con avatares)
    ---------------------------------------- */
-.gameover-winner {
-    text-align: center;
-    padding: var(--space-2xl);
-    margin-bottom: var(--space-xl);
-}
-
-.gameover-winner-icon {
-    width: 80px;
-    height: 80px;
-    margin: 0 auto var(--space-lg);
-}
-
-.gameover-winner h2 {
-    font-family: var(--font-display);
-    font-size: clamp(2.5rem, 8vw, 4rem);
-    color: var(--color-accent-gold);
-    margin-bottom: var(--space-sm);
-    text-shadow: 0 0 30px rgba(201, 162, 39, 0.5);
-}
-
 .gameover-reason {
     font-size: 1.125rem;
     color: var(--color-text-secondary);
@@ -1647,15 +1590,6 @@ p {
     color: var(--color-text-muted);
 }
 
-/* FIX: Puntuación de ronda diferenciada */
-.score-round-points {
-    font-family: var(--font-display);
-    font-size: 1rem;
-    color: var(--color-success-light);
-    min-width: 60px;
-    text-align: right;
-}
-
 .score-points {
     font-family: var(--font-display);
     font-size: 1.5rem;
@@ -1714,6 +1648,10 @@ p {
 
 .toast.error {
     border-color: var(--color-danger);
+}
+
+.toast.warning {
+    border-color: var(--color-warning);
 }
 
 @keyframes toastIn {
@@ -1977,10 +1915,6 @@ p {
     
     .avatar-grid {
         grid-template-columns: repeat(5, 1fr);
-    }
-    
-    .gameover-winner h2 {
-        font-size: clamp(2rem, 8vw, 3rem);
     }
     
     .you-eliminated-message h1 {

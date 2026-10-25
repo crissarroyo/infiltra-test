@@ -17,8 +17,8 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-    <link rel="stylesheet" href="css/game-styles.css?v=2.1.0">
-    <link rel="stylesheet" href="css/hex-avatars.css?v=2.1.0">
+    <link rel="stylesheet" href="css/game-styles.css?v=2.2.0">
+    <link rel="stylesheet" href="css/hex-avatars.css?v=2.2.0">
 </head>
 <body class="game-page">
     <div class="particles-bg" id="particles"></div>
@@ -95,13 +95,13 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label"><img src="assets/icons/icon-impostor.png" alt="" class="config-role-icon"> Infiltrados</label>
-                            <input type="number" id="config-impostors" class="form-input" value="1" min="1" max="5">
+                            <input type="number" id="config-impostors" class="form-input" value="1" min="1" max="4">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label"><img src="assets/icons/icon-charlatan.png" alt="" class="config-role-icon"> Charlatanes</label>
-                            <input type="number" id="config-charlatans" class="form-input" value="0" min="0" max="3">
+                            <input type="number" id="config-charlatans" class="form-input" value="0" min="0" max="8">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Tiempo Ronda</label>
@@ -172,6 +172,7 @@
                         <div class="room-code-label">Código de Sala</div>
                     </div>
                     <div class="qr-container" id="qr-container"></div>
+                    <p class="status-text" id="lobby-status" style="display:none"></p>
                     <div class="player-list-box">
                         <div class="player-list-header">
                             <h3>Jugadores</h3>
@@ -347,12 +348,12 @@
                     <div class="points-box" style="margin-top:1.5rem">
                         <h4>Sistema de Puntos</h4>
                         <ul>
-                            <li><span class="points-value positive">+15</span> Ciudadano sobrevive</li>
-                            <li><span class="points-value positive">+7</span> Votar correctamente</li>
-                            <li><span class="points-value negative">-3</span> Votar incorrectamente</li>
-                            <li><span class="points-value positive">+30</span> Infiltrado gana</li>
+                            <li><span class="points-value positive">+15</span> Ciudadano sobrevive y gana</li>
+                            <li><span class="points-value positive">+7</span> Votar a un infiltrado</li>
+                            <li><span class="points-value negative">-3</span> Votar a un inocente</li>
+                            <li><span class="points-value positive">+30</span> Infiltrado sobrevive y gana</li>
                             <li><span class="points-value positive">+5</span> Infiltrado sobrevive ronda</li>
-                            <li><span class="points-value positive">+25</span> Charlatán sobrevive</li>
+                            <li><span class="points-value positive">+25</span> Charlatán sobrevive y gana</li>
                         </ul>
                     </div>
                     <div class="btn-group" style="margin-top:1.5rem">
@@ -365,7 +366,7 @@
         </main>
     </div>
     <div class="toast-container" id="toast-container"></div>
-    <script src="js/word-images.js?v=2.1.0"></script>
-    <script src="js/game.js?v=2.1.0"></script>
+    <script src="js/word-images.js?v=2.2.0"></script>
+    <script src="js/game.js?v=2.2.0"></script>
 </body>
 </html>

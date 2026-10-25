@@ -20,7 +20,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/styles.css?v=2.1.0">
+    <link rel="stylesheet" href="css/styles.css?v=2.2.0">
 </head>
 <body class="landing-page">
     <!-- Efecto de partículas de fondo -->
@@ -186,9 +186,9 @@
                         <div class="role-points">
                             <h4>Sistema de Puntos</h4>
                             <ul>
-                                <li><span class="points positive">+15</span> Sobrevivir la partida</li>
-                                <li><span class="points positive">+7</span> Votar correctamente al infiltrado</li>
-                                <li><span class="points negative">-3</span> Votar a otro ciudadano</li>
+                                <li><span class="points positive">+15</span> Sobrevivir y ganar la partida</li>
+                                <li><span class="points positive">+7</span> Por cada voto a un infiltrado</li>
+                                <li><span class="points negative">-3</span> Por cada voto a un inocente</li>
                             </ul>
                         </div>
                     </div>
@@ -204,7 +204,7 @@
                         <div class="role-points">
                             <h4>Sistema de Puntos</h4>
                             <ul>
-                                <li><span class="points positive">+30</span> Ganar la partida</li>
+                                <li><span class="points positive">+30</span> Sobrevivir y ganar la partida</li>
                                 <li><span class="points positive">+5</span> Por cada ronda que sobrevivas</li>
                             </ul>
                         </div>
@@ -221,8 +221,9 @@
                         <div class="role-points">
                             <h4>Sistema de Puntos</h4>
                             <ul>
-                                <li><span class="points positive">+25</span> Sobrevivir la partida</li>
-                                <li><span class="points positive">+7</span> Votar correctamente al infiltrado</li>
+                                <li><span class="points positive">+25</span> Sobrevivir y ganar la partida</li>
+                                <li><span class="points positive">+7</span> Por cada voto a un infiltrado</li>
+                                <li><span class="points negative">-3</span> Por cada voto a un inocente</li>
                             </ul>
                         </div>
                     </div>
@@ -325,7 +326,7 @@
                         <span class="faq-icon">+</span>
                     </button>
                     <div class="faq-answer">
-                        <p>Si te desconectas durante una partida, serás eliminado automáticamente del juego actual. Puedes volver a unirte a la sala cuando inicie una nueva partida.</p>
+                        <p>Si recargas la página o pierdes la señal unos segundos, el juego te reconecta a la partida. Si pasas más de 10 segundos desconectado, quedas eliminado de la partida actual, pero puedes seguir en la sala y jugar la siguiente.</p>
                     </div>
                 </div>
                 
@@ -345,7 +346,7 @@
                         <span class="faq-icon">+</span>
                     </button>
                     <div class="faq-answer">
-                        <p>Puedes reportar bugs o sugerir mejoras a través de la sección de contacto más abajo, o directamente en nuestro repositorio de GitHub.</p>
+                        <p>Puedes reportar bugs o sugerir mejoras a través de la sección de contacto más abajo, o abriendo un issue en nuestro <a href="https://github.com/crissarroyo/infiltra/issues" target="_blank" rel="noopener">repositorio de GitHub</a>.</p>
                     </div>
                 </div>
             </div>
@@ -395,7 +396,7 @@
                         <img src="assets/icons/icon-github.png" alt="" class="contact-icon-img">
                         <div>
                             <h4>GitHub</h4>
-                            <p>github.com/infiltra-game</p>
+                            <p><a href="https://github.com/crissarroyo/infiltra" target="_blank" rel="noopener">github.com/crissarroyo/infiltra</a></p>
                         </div>
                     </div>
                 </div>
@@ -424,17 +425,10 @@
                     </ul>
                 </div>
                 <div class="footer-column">
-                    <h4>Legal</h4>
-                    <ul>
-                        <li><a href="#terminos">Términos de Uso</a></li>
-                        <li><a href="#privacidad">Privacidad</a></li>
-                    </ul>
-                </div>
-                <div class="footer-column">
                     <h4>Contacto</h4>
                     <ul>
                         <li><a href="#contacto">Soporte</a></li>
-                        <li><a href="#">GitHub</a></li>
+                        <li><a href="https://github.com/crissarroyo/infiltra" target="_blank" rel="noopener">GitHub</a></li>
                     </ul>
                 </div>
             </div>
@@ -442,7 +436,7 @@
         
         <div class="footer-bottom">
             <p>&copy; 2026 INFILTRA. Todos los derechos reservados.</p>
-            <p class="version-tag">v2.1.0</p>
+            <p class="version-tag">v2.2.0</p>
         </div>
     </footer>
 
@@ -489,7 +483,10 @@
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function(e) {
                 e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
+                const href = this.getAttribute('href');
+                // href="#" (logo) no es un selector válido: sube al inicio
+                if (href === '#') { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+                const target = document.querySelector(href);
                 if (target) {
                     target.scrollIntoView({
                         behavior: 'smooth',
@@ -501,18 +498,8 @@
 
         // Header scroll effect
         const header = document.querySelector('.main-header');
-        let lastScroll = 0;
-        
         window.addEventListener('scroll', () => {
-            const currentScroll = window.pageYOffset;
-            
-            if (currentScroll > 50) {
-                header.classList.add('scrolled');
-            } else {
-                header.classList.remove('scrolled');
-            }
-            
-            lastScroll = currentScroll;
+            header.classList.toggle('scrolled', window.pageYOffset > 50);
         });
 
         // Intersection Observer for animations

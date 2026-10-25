@@ -25,12 +25,12 @@ INFILTRA es un juego multijugador de deducción social donde los jugadores deben
 
 | Acción | Puntos |
 |--------|--------|
-| Ciudadano sobrevive la partida | +15 |
-| Votar correctamente al infiltrado | +7 |
-| Votar incorrectamente | -3 |
-| Infiltrado gana la partida | +30 |
+| Ciudadano sobrevive y su equipo gana | +15 |
+| Cada voto a un infiltrado (ciudadano o charlatán) | +7 |
+| Cada voto a un inocente (ciudadano o charlatán) | -3 |
+| Infiltrado sobrevive y su equipo gana | +30 |
 | Infiltrado sobrevive una ronda | +5 |
-| Charlatán sobrevive la partida | +25 |
+| Charlatán sobrevive y su equipo gana | +25 |
 
 ---
 
@@ -46,7 +46,10 @@ Funciona en cualquier dispositivo con navegador web moderno:
 ## ❓ Preguntas Frecuentes
 
 **¿Cuántos jugadores se necesitan?**
-De 3 a 10 jugadores. Recomendamos 5 o más para mejor experiencia.
+De 3 a 10 jugadores. Recomendamos 5 o más para mejor experiencia. Los infiltrados siempre empiezan siendo menos que el resto.
+
+**¿Qué pasa si me desconecto?**
+Si recargas o pierdes la señal unos segundos, te reconectas a la partida. Con más de 10 segundos fuera quedas eliminado de esa partida y juegas la siguiente.
 
 **¿Es gratis?**
 Sí, completamente gratis.
@@ -58,7 +61,7 @@ No, solo ingresa tu nombre y juega.
 
 ## 📬 Contacto
 
-¿Encontraste un bug o tienes sugerencias? Envíanos un correo explicando toda la experiencia.
+¿Encontraste un bug o tienes sugerencias? [Abre un issue](https://github.com/crissarroyo/infiltra/issues) explicando toda la experiencia.
 
 ---
 

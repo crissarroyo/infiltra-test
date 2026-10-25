@@ -1,5 +1,15 @@
 /**
- * INFILTRA - Game Logic v2.1.0 (Definitive Edition)
+ * INFILTRA - Game Logic v2.2.0 (Definitive Edition)
+ *
+ * v2.2.0: revisión de bugs y congruencia con lo anunciado
+ * ✓ Sonido real (Web Audio, sin archivos) con el botón de silencio
+ * ✓ Puntos por voto tal como se anuncian (+7 / -3 por cada voto) y
+ *   +5 al infiltrado también en rondas con empate
+ * ✓ Configuración de sala (infiltrados, charlatanes, categorías) en
+ *   state/: sobrevive a F5 y a cambios de host
+ * ✓ Quien entra con la partida empezada espera a la siguiente
+ * ✓ Nombres escapados (sin inyección de HTML entre jugadores)
+ * ✓ Desconexiones actualizan roles y pueden terminar la partida
  *
  * v2.1.0: base de palabras ampliada — 19 categorías, 481 palabras
  * (7 categorías nuevas: Objetos, Lugares, Naturaleza, Tecnología,
@@ -34,10 +44,7 @@ const ICONS = {
     impostor: 'assets/icons/icon-impostor.png',
     charlatan: 'assets/icons/icon-charlatan.png',
     help: 'assets/icons/icon-help.png',
-    check: 'assets/icons/icon-check.png',
-    close: 'assets/icons/icon-close.png',
     kick: 'assets/icons/icon-kick.png',
-    lock: 'assets/icons/icon-lock.png',
     active: 'assets/icons/icon-active.png',
     eliminated: 'assets/icons/icon-eliminated.png',
     voted: 'assets/icons/icon-voted.png',
@@ -47,7 +54,6 @@ const ICONS = {
     medalGold: 'assets/icons/icon-medal-gold.png',
     medalSilver: 'assets/icons/icon-medal-silver.png',
     medalBronze: 'assets/icons/icon-medal-bronze.png',
-    warning: 'assets/icons/icon-warning.png',
     soundOn: 'assets/icons/icon-sound-on.png',
     soundOff: 'assets/icons/icon-sound-off.png',
     play: 'assets/icons/icon-play.png'
@@ -142,6 +148,8 @@ let G = {
     hostId: null,
     maxPlayers: 10,
     roundTime: 60,
+    numImpostors: 1,       // config de sala; se sincroniza desde state/
+    numCharlatans: 0,
     selectedCategories: Object.keys(DB),
     players: {},
     activePlayers: [],
@@ -162,6 +170,8 @@ let G = {
     prevPhase: null,           // track prev phase for transitions
     rolesVersion: 0,           // detect skip_word without phase change
     resultsPublished: false,   // prevent double publish
+    gameOverPublished: false,  // evita sumar puntos finales dos veces
+    waitingNextGame: false,    // llegó con la partida empezada (sin rol)
     isSpectator: false,
     votes: {},
     votedPlayers: new Set(),
@@ -179,11 +189,89 @@ let G = {
     screenStack: [],
     roleRevealed: false,
     isFirstRound: true,
-    roundStarting: false,
-    roundInProgress: false
+    roundStarting: false
 };
 
 document.addEventListener('DOMContentLoaded', init);
+
+// Escapa texto que viene de otros jugadores (nombres) antes de
+// insertarlo con innerHTML.
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
+function roleClassOf(role) {
+    return role === 'INFILTRADO' ? 'impostor' : role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
+}
+
+// Ícono local según el rol (no se toma la ruta que viene del estado)
+function roleIconOf(role) { return ICONS[roleClassOf(role)]; }
+
+// Rol verdadero (el charlatán cree ser ciudadano, pero espectadores y
+// pantalla final deben ver CHARLATÁN).
+function trueRoleOf(id) {
+    return (G.trueRoles && G.trueRoles[id]) || (G.fullRoles[id] && G.fullRoles[id].role) || '';
+}
+
+// ── Sonido (v2.2.0) ──────────────────────────────────────────────
+// Efectos sintetizados con Web Audio (sin archivos que descargar).
+// El contexto se crea en el primer toque, como exigen los navegadores
+// móviles. Preferencia de silencio guardada en localStorage.
+let audioCtx = null;
+const SFX = {
+    reveal:     [[523, 0.08], [784, 0.14]],
+    start:      [[392, 0.1], [523, 0.1], [659, 0.18]],
+    tick:       [[880, 0.05]],
+    timeup:     [[660, 0.15], [440, 0.25]],
+    voting:     [[440, 0.08], [554, 0.12]],
+    vote:       [[700, 0.06]],
+    tie:        [[440, 0.12], [440, 0.12]],
+    eliminated: [[330, 0.15], [247, 0.3]],
+    win:        [[523, 0.1], [659, 0.1], [784, 0.1], [1047, 0.3]],
+    lose:       [[392, 0.18], [330, 0.18], [262, 0.4]]
+};
+
+function unlockAudio() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    try {
+        if (!audioCtx) audioCtx = new Ctx();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) { audioCtx = null; }
+}
+
+function playSound(name) {
+    // Con el contexto suspendido el reloj está congelado: las notas se
+    // acumularían y sonarían todas juntas al reanudarse.
+    if (!G.soundEnabled || !audioCtx || audioCtx.state !== 'running' || !SFX[name]) return;
+    try {
+        let t = audioCtx.currentTime;
+        SFX[name].forEach(function(note) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.value = note[0];
+            gain.gain.setValueAtTime(0.0001, t);
+            gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t + note[1]);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + note[1] + 0.02);
+            t += note[1] * 0.9;
+        });
+    } catch (e) { /* sin sonido no rompe el juego */ }
+}
+
+function updateSoundButton() {
+    const btn = document.getElementById('btn-sound');
+    if (!btn) return;
+    const img = btn.querySelector('img');
+    if (img) img.src = G.soundEnabled ? ICONS.soundOn : ICONS.soundOff;
+    btn.classList.toggle('muted', !G.soundEnabled);
+}
 
 // ── Persistencia de sesión (reconexión tras F5) ──────────────────
 // RTDB reenvía el estado completo de la sala al re-suscribirse, así
@@ -231,7 +319,7 @@ function setupRefreshProtection() {
     }, { passive: false });
 
     document.addEventListener('keydown', function(e) {
-        if (G.gamePhase !== 'home' && G.gamePhase !== 'lobby' && (e.key === 'F5' || (e.ctrlKey && e.key === 'r'))) {
+        if (G.gamePhase !== 'home' && G.gamePhase !== 'lobby' && !G.waitingNextGame && (e.key === 'F5' || (e.ctrlKey && e.key === 'r'))) {
             e.preventDefault();
             toast('Actualizar deshabilitado durante el juego', 'warning');
         }
@@ -259,6 +347,12 @@ function init() {
     }
     injectDynamicStyles();
     setupRefreshProtection();
+    try { G.soundEnabled = localStorage.getItem('infiltra_sound') !== 'off'; } catch (e) {}
+    updateSoundButton();
+    // En móviles el gesto válido para el audio es touchend/click
+    ['pointerdown', 'touchend', 'click', 'keydown'].forEach(function(ev) {
+        document.addEventListener(ev, unlockAudio, { passive: true });
+    });
     const saved = loadSession();
     if (saved && saved.gamePhase && saved.gamePhase !== 'home') {
         if (confirm('Se detectó una partida en progreso. ¿Deseas reconectarte?')) {
@@ -393,10 +487,24 @@ function updateSelectedCategories() {
 }
 
 // ── Role Configuration Validation (ported from v1.1.0) ───────────
+// Valores de configuración leídos y acotados (3-10 jugadores, al
+// menos 1 infiltrado, charlatanes >= 0).
+function readRoleConfig() {
+    const maxPlayers = Math.min(Math.max(parseInt(document.getElementById('config-max-players')?.value) || 10, 3), 10);
+    const impostors  = Math.max(parseInt(document.getElementById('config-impostors')?.value) || 1, 1);
+    const charlatans = Math.max(parseInt(document.getElementById('config-charlatans')?.value) || 0, 0);
+    return { maxPlayers: maxPlayers, impostors: impostors, charlatans: charlatans };
+}
+
+// Los infiltrados ganan al igualar en número, así que deben empezar
+// siendo menos que el resto: como máximo floor((n-1)/2).
+function maxImpostorsFor(n) { return Math.max(1, Math.floor((n - 1) / 2)); }
+
 function validateRoleConfiguration() {
-    const maxPlayers = parseInt(document.getElementById('config-max-players')?.value) || 10;
-    const impostors = parseInt(document.getElementById('config-impostors')?.value) || 1;
-    const charlatans = parseInt(document.getElementById('config-charlatans')?.value) || 0;
+    const cfg = readRoleConfig();
+    const maxPlayers = cfg.maxPlayers;
+    const impostors = cfg.impostors;
+    const charlatans = cfg.charlatans;
     const specialRoles = impostors + charlatans;
     const citizens = maxPlayers - specialRoles;
     const summaryImpostors = document.getElementById('summary-impostors');
@@ -409,8 +517,11 @@ function validateRoleConfiguration() {
     if (summaryCharlatans) summaryCharlatans.textContent = charlatans;
     if (summaryCitizens) summaryCitizens.textContent = Math.max(0, citizens);
     if (summaryTotal) summaryTotal.textContent = maxPlayers;
-    if (specialRoles >= maxPlayers) {
-        if (errorElement) { errorElement.textContent = '❌ Debe haber al menos 1 ciudadano'; errorElement.style.display = 'block'; errorElement.style.color = '#ff4757'; }
+    const blockError = specialRoles >= maxPlayers ? '❌ Debe haber al menos 1 ciudadano'
+        : impostors > maxImpostorsFor(maxPlayers) ? '❌ Con ' + maxPlayers + ' jugadores el máximo es ' + maxImpostorsFor(maxPlayers) + ' infiltrado(s)'
+        : null;
+    if (blockError) {
+        if (errorElement) { errorElement.textContent = blockError; errorElement.style.display = 'block'; errorElement.style.color = '#ff4757'; }
         if (createButton) { createButton.disabled = true; createButton.style.opacity = '0.5'; }
         return false;
     }
@@ -465,12 +576,9 @@ function createSpectatorControls() {
     skipBtn.textContent = 'Cambiar Palabra';
     skipBtn.style.display = 'none';
     skipBtn.onclick = skipWord;
-    const controls = spectatorScreen.querySelector('.spectator-controls');
-    if (controls) {
-        const nextBtn = document.getElementById('btn-spectator-next');
-        if (nextBtn) controls.insertBefore(skipBtn, nextBtn);
-        else controls.appendChild(skipBtn);
-    }
+    // Va junto a "Siguiente Ronda", en el mismo grupo de botones
+    const nextBtn = document.getElementById('btn-spectator-next');
+    if (nextBtn && nextBtn.parentNode) nextBtn.parentNode.insertBefore(skipBtn, nextBtn);
 }
 
 function updateSpectatorHostControls() {
@@ -478,10 +586,13 @@ function updateSpectatorHostControls() {
     const btnLobby = document.getElementById('btn-spectator-lobby');
     const btnSkip = document.getElementById('btn-spectator-skip');
     if (G.isHost && G.isSpectator) {
+        // Solo hay acción de host entre rondas: con la ronda o la
+        // votación en curso, "Siguiente/Iniciar" las cortaría a medias.
+        const canAdvance = G.gamePhase === 'roles' || G.gamePhase === 'results';
         if (btnNext) {
-            btnNext.style.display = 'block';
+            btnNext.style.display = canAdvance ? 'block' : 'none';
             btnNext.disabled = false;
-            btnNext.textContent = (G.gamePhase === 'results' || G.gamePhase === 'voting') ? 'Siguiente Ronda' : 'Iniciar Ronda';
+            btnNext.textContent = G.gamePhase === 'roles' ? 'Iniciar Ronda' : 'Siguiente Ronda';
         }
         if (btnLobby) btnLobby.style.display = 'block';
         if (btnSkip) btnSkip.style.display = G.gamePhase === 'roles' ? 'block' : 'none';
@@ -502,7 +613,7 @@ function updateRolePlayersList() {
         const isMe = id === G.myId;
         return '<div class="role-player-item' + (isEliminated ? ' eliminated' : '') + (isMe ? ' is-me' : '') + '">' +
             '<div class="role-player-avatar">' + renderHexAvatar(id, 32) + '</div>' +
-            '<span class="role-player-name">' + (p?.name || id.substring(0, 8)) + (isMe ? ' (Tú)' : '') + '</span>' +
+            '<span class="role-player-name">' + esc(p?.name || id.substring(0, 8)) + (isMe ? ' (Tú)' : '') + '</span>' +
             '</div>';
     }).join('');
 }
@@ -511,13 +622,15 @@ function updatePlayersSidebar() {
     const list = document.getElementById('sidebar-players-list');
     const sidebar = document.getElementById('players-sidebar');
     if (!list || !sidebar) return;
-    const allPlayerIds = Object.keys(G.players);
+    // En partida, solo quienes juegan esta partida (no quien espera)
+    const roleIds = Object.keys(G.fullRoles || {});
+    const allPlayerIds = roleIds.length > 0 ? roleIds : Object.keys(G.players);
     list.innerHTML = allPlayerIds.map(id => {
         const p = G.players[id];
         const isEliminated = G.eliminated.includes(id);
         return '<div class="sidebar-player' + (isEliminated ? ' eliminated' : '') + '">' +
             '<div class="sidebar-player-avatar">' + renderHexAvatar(id, 28) + '</div>' +
-            '<span class="sidebar-player-name">' + (p?.name || id.substring(0, 8)) + '</span></div>';
+            '<span class="sidebar-player-name">' + esc(p?.name || id.substring(0, 8)) + '</span></div>';
     }).join('');
 }
 
@@ -568,11 +681,10 @@ function bindEvents() {
     });
     bind('btn-sound', function() {
         G.soundEnabled = !G.soundEnabled;
-        const btn = document.getElementById('btn-sound');
-        if (btn) {
-            btn.querySelector('img').src = G.soundEnabled ? ICONS.soundOn : ICONS.soundOff;
-            btn.classList.toggle('muted', !G.soundEnabled);
-        }
+        try { localStorage.setItem('infiltra_sound', G.soundEnabled ? 'on' : 'off'); } catch (e) {}
+        updateSoundButton();
+        unlockAudio();
+        playSound('vote');
     });
     bind('btn-help', function() {
         const current = document.querySelector('.screen.active')?.id || 'screen-home';
@@ -586,15 +698,14 @@ function bindEvents() {
     const impostorsInput = document.getElementById('config-impostors');
     const charlatansInput = document.getElementById('config-charlatans');
     if (maxPlayersInput) maxPlayersInput.addEventListener('input', function() {
-        const maxPlayers = parseInt(this.value) || 3;
-        if (impostorsInput) impostorsInput.max = maxPlayers - 1;
-        if (charlatansInput) charlatansInput.max = maxPlayers - 1;
+        const cfg = readRoleConfig();
+        if (impostorsInput) impostorsInput.max = maxImpostorsFor(cfg.maxPlayers);
+        if (charlatansInput) charlatansInput.max = Math.max(0, cfg.maxPlayers - cfg.impostors - 1);
         validateRoleConfiguration();
     });
     if (impostorsInput) impostorsInput.addEventListener('input', function() {
-        const maxPlayers = parseInt(maxPlayersInput?.value) || 10;
-        const impostors = parseInt(this.value) || 1;
-        if (charlatansInput) charlatansInput.max = Math.max(0, maxPlayers - impostors - 1);
+        const cfg = readRoleConfig();
+        if (charlatansInput) charlatansInput.max = Math.max(0, cfg.maxPlayers - cfg.impostors - 1);
         validateRoleConfiguration();
     });
     if (charlatansInput) charlatansInput.addEventListener('input', validateRoleConfiguration);
@@ -608,7 +719,7 @@ function checkURLParams() {
     if (code) {
         const input = document.getElementById('input-join-code');
         if (input) {
-            input.value = code.toUpperCase();
+            input.value = code.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
             toast('Código detectado');
         }
     }
@@ -639,13 +750,18 @@ function showConfig() {
 // ── Room Creation / Join ─────────────────────────────────────────
 
 function createRoom() {
+    if (G.channel) return; // doble toque en "Crear Sala"
     G.playerName = document.getElementById('input-name')?.value.trim() || '';
     if (!G.playerName) { toast('Ingresa tu nombre', 'error'); return; }
     updateSelectedCategories();
     if (G.selectedCategories.length === 0) { toast('Selecciona categorías', 'error'); return; }
+    if (!validateRoleConfiguration()) { toast('Revisa la distribución de roles', 'error'); return; }
+    const cfg = readRoleConfig();
     G.isHost = true;
     G.hostId = G.myId;
-    G.maxPlayers = Math.min(parseInt(document.getElementById('config-max-players')?.value) || 10, 10);
+    G.maxPlayers = cfg.maxPlayers;
+    G.numImpostors = cfg.impostors;
+    G.numCharlatans = cfg.charlatans;
     G.roundTime = parseInt(document.getElementById('config-time')?.value) || 60;
     G.scores = {};
     G.usedWords = [];
@@ -659,7 +775,7 @@ function createRoom() {
 // rooms/{code}. Si el código de 4 letras ya está ocupado, se genera
 // otro y se reintenta (evita pisar una sala ajena en curso).
 function createRoomAtomic(attempts) {
-    if (attempts >= 5) { toast('No se pudo crear la sala, reintenta', 'error'); return; }
+    if (attempts >= 5) { G.channel = null; toast('No se pudo crear la sala, reintenta', 'error'); return; }
     if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
     G.channel = generateCode();
@@ -671,6 +787,11 @@ function createRoomAtomic(attempts) {
                 hostOnline: true,
                 maxPlayers: G.maxPlayers,
                 roundTime: G.roundTime,
+                // Config en el estado: un host heredado o recargado
+                // reparte con la misma configuración que el creador.
+                impostorCount: G.numImpostors,
+                charlatanCount: G.numCharlatans,
+                categories: G.selectedCategories,
                 gamePhase: 'lobby',
                 isFirstRound: true,
                 rolesVersion: 0,
@@ -684,6 +805,7 @@ function createRoomAtomic(attempts) {
             createRoomAtomic(attempts + 1);
         }
     }).catch(function(e) {
+        G.channel = null;
         console.error('Error creando sala:', e);
         toast('Error creando sala', 'error');
     });
@@ -693,12 +815,26 @@ function joinRoom() {
     G.playerName = document.getElementById('input-name')?.value.trim() || '';
     if (!G.playerName) { toast('Ingresa tu nombre', 'error'); return; }
     const code = (document.getElementById('input-join-code')?.value || '').toUpperCase().trim();
-    if (code.length !== 4) { toast('Código de 4 letras', 'error'); return; }
+    // Solo A-Z: un código del QR/URL con . # $ [ ] haría fallar ref()
+    if (!/^[A-Z]{4}$/.test(code)) { toast('Código de 4 letras', 'error'); return; }
+    if (G.channel || G.joining) return; // doble toque en "Unirse"
     saveProfile();
-    G.isHost = false;
-    G.channel = code;
-    G.gamePhase = 'lobby';
-    initFirebase();
+    // Comprobar que la sala existe ANTES de escribir la presencia: así
+    // un código mal tecleado no deja nodos basura en rooms/.
+    G.joining = true;
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    firebase.database().ref('rooms/' + code + '/state/hostId').once('value').then(function(snap) {
+        G.joining = false;
+        if (!snap.val()) { toast('Sala no encontrada', 'error'); return; }
+        G.isHost = false;
+        G.channel = code;
+        G.gamePhase = 'lobby';
+        initFirebase();
+    }).catch(function(e) {
+        G.joining = false;
+        console.error('Error buscando sala:', e);
+        toast('No se pudo conectar, reintenta', 'error');
+    });
 }
 
 function generateCode() {
@@ -856,6 +992,12 @@ function onStateChange(snapshot) {
     G.roundTime  = state.roundTime || 60;
     G.usedWords  = arrayFromFirebase(state.usedWords);
     G.scores     = state.scores || {};
+    if (state.impostorCount)  G.numImpostors  = state.impostorCount;
+    if (state.charlatanCount !== undefined) G.numCharlatans = state.charlatanCount;
+    if (state.categories) {
+        const cats = arrayFromFirebase(state.categories).filter(function(c) { return DB[c]; });
+        if (cats.length > 0) G.selectedCategories = cats;
+    }
 
     // Cambio de host (manual o automático) detectado por estado
     if (prevHostId && state.hostId && prevHostId !== state.hostId) {
@@ -868,6 +1010,30 @@ function onStateChange(snapshot) {
     } else if (state.hostOnline !== false && G.hostClaimTimer) {
         clearTimeout(G.hostClaimTimer);
         G.hostClaimTimer = null;
+    }
+
+    // Llegó con la partida empezada (no tiene rol): espera en el lobby
+    // a la siguiente partida en vez de ver pantallas de ronda sin rol.
+    if (newPhase !== 'lobby' && !(state.roles && state.roles[G.myId])) {
+        G.prevPhase     = newPhase;
+        G.gamePhase     = newPhase;
+        G.activePlayers = arrayFromFirebase(state.activePlayers);
+        G.eliminated    = arrayFromFirebase(state.eliminated);
+        G.fullRoles     = state.roles || {}; // para excluirlo de la sucesión de host
+        if (!G.waitingNextGame) {
+            G.waitingNextGame = true;
+            G.reconnecting = false;
+            document.getElementById('display-room-code').textContent = G.channel;
+            showScreen('screen-lobby');
+            setLobbyNotice('Hay una partida en curso. Entrarás en la siguiente.');
+        }
+        renderPlayerList();
+        saveSession();
+        return;
+    }
+    if (G.waitingNextGame) {
+        G.waitingNextGame = false;
+        setLobbyNotice('');
     }
 
     // Handle phase transitions
@@ -884,7 +1050,22 @@ function onStateChange(snapshot) {
         G.citizens      = arrayFromFirebase(state.citizens);
         G.fullRoles     = state.roles || {};
         G.starterPlayerId = state.starterPlayerId || null;
-        if (G.isHost && state.trueRoles) G.trueRoles = state.trueRoles;
+        // Todos guardan los roles verdaderos: un host heredado los
+        // necesita para "Cambiar Palabra" (si no, el charlatán recibía
+        // la palabra secreta) y los espectadores para ver al charlatán.
+        if (state.trueRoles) G.trueRoles = state.trueRoles;
+        // Eliminado por desconexión que vuelve sin recargar: pasa a espectador
+        if (newPhase !== 'lobby' && G.eliminated.includes(G.myId) && !G.isSpectator && !G.reconnecting) {
+            G.isSpectator = true;
+        }
+        // Si la lista de jugadores llegó antes que el estado (p. ej. tras
+        // un F5 del host), los que ya estaban offline no tenían cuenta
+        // atrás de eliminación: se agenda ahora que se conoce la partida.
+        if (newPhase !== 'lobby' && newPhase !== 'gameover') {
+            Object.keys(G.players).forEach(function(id) {
+                if (G.players[id] && G.players[id].online === false) scheduleOfflineElimination(id);
+            });
+        }
 
         // Reconexión (F5): el primer snapshot trae la sala completa.
         // Restauramos rol, anclas de timers y pantalla según la fase,
@@ -938,6 +1119,9 @@ function onStateChange(snapshot) {
                 handleStartRoundFromState(state);
                 break;
             case 'voting':
+                // Votación nueva: quien sea host ahora debe poder publicar
+                // (un ex-host conservaba el flag de una ronda anterior).
+                G.resultsPublished = false;
                 // Reset local vote state and show voting screen
                 G.votes       = state.votes || {};
                 G.votedPlayers = new Set(arrayFromFirebase(state.votedPlayers));
@@ -971,7 +1155,7 @@ function onStateChange(snapshot) {
             G.fullRoles     = state.roles || {};
             G.starterPlayerId = state.starterPlayerId || null;
             G.usedWords     = arrayFromFirebase(state.usedWords);
-            if (G.isHost && state.trueRoles) G.trueRoles = state.trueRoles;
+            if (state.trueRoles) G.trueRoles = state.trueRoles;
             handleSkipWordFromState(state);
         }
     } else if (newPhase === 'voting') {
@@ -1001,21 +1185,25 @@ function onPlayersChange(snapshot) {
     const playersData = snapshot.val() || {};
     const newIds = Object.keys(playersData);
 
+    // Sala llena (solo host): también con la partida en curso, para que
+    // quien espera la siguiente no exceda el máximo. Se cuentan solo los
+    // jugadores online y se acumulan los admitidos en este mismo evento.
+    if (G.isHost) {
+        let count = Object.keys(G.players).filter(function(pid) { return G.players[pid] && G.players[pid].online !== false; }).length;
+        newIds.forEach(function(id) {
+            if (id === G.myId || G.players[id] || !playersData[id] || playersData[id].online === false) return;
+            if (count >= G.maxPlayers) {
+                G.db.ref('rooms/' + G.channel + '/signals/' + id).set({
+                    type: 'room_full',
+                    ts: firebase.database.ServerValue.TIMESTAMP
+                });
+            } else {
+                count++;
+            }
+        });
+    }
+
     if (G.gamePhase === 'lobby' || G.gamePhase === 'home') {
-        // In lobby: check room-full for new joiners (host only)
-        if (G.isHost) {
-            newIds.forEach(function(id) {
-                if (id !== G.myId && !G.players[id]) {
-                    const currentCount = Object.keys(G.players).filter(pid => G.players[pid]).length;
-                    if (currentCount >= G.maxPlayers) {
-                        G.db.ref('rooms/' + G.channel + '/signals/' + id).set({
-                            type: 'room_full',
-                            ts: firebase.database.ServerValue.TIMESTAMP
-                        });
-                    }
-                }
-            });
-        }
         // Remove players who have gone offline in lobby
         Object.keys(G.players).forEach(function(id) {
             if (!newIds.includes(id) || playersData[id]?.online === false) {
@@ -1032,7 +1220,15 @@ function onPlayersChange(snapshot) {
             // Offline en partida → eliminación con periodo de gracia
             // (un F5 tarda segundos en volver; no lo tratamos como abandono)
             if (G.gamePhase !== 'lobby' && G.gamePhase !== 'home' && G.gamePhase !== 'gameover') {
-                if (G.players[id]) G.players[id].online = false; // conservar datos para sucesión/render
+                // Conservar datos (nombre, avatar) para render y sucesión,
+                // aunque este cliente no lo haya visto antes online
+                G.players[id] = {
+                    name:   p.name   || (G.players[id] && G.players[id].name) || id.substring(0, 8),
+                    avatar: p.avatar || 'avatar-01',
+                    frame:  p.frame  || 'fr-none',
+                    online: false,
+                    joinedAt: p.joinedAt || 0
+                };
                 scheduleOfflineElimination(id);
             } else {
                 delete G.players[id];
@@ -1237,9 +1433,9 @@ function restoreRoleScreen() {
     if (!G.myRole) return;
     const card = document.getElementById('role-card');
     if (G.roleRevealed) {
-        const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
+        const roleClass = roleClassOf(G.myRole.role);
         if (card) card.className = 'role-card ' + roleClass;
-        document.getElementById('role-icon').innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
+        document.getElementById('role-icon').innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
         document.getElementById('role-title').textContent = G.myRole.role;
         document.getElementById('role-word').textContent = G.myRole.word;
         document.getElementById('role-instruction').textContent = 'Tu rol (ya revelado)';
@@ -1271,7 +1467,7 @@ function generateQR() {
     if (!container || typeof qrcode === 'undefined') return;
     const qr = qrcode(0, 'M');
     // Dynamic URL — works on GitHub Pages, local dev, staging, etc.
-    const baseUrl = window.location.href.split('?')[0];
+    const baseUrl = window.location.href.split('#')[0].split('?')[0];
     qr.addData(baseUrl + '?code=' + G.channel);
     qr.make();
     container.innerHTML = qr.createImgTag(4) +
@@ -1315,22 +1511,24 @@ function renderPlayerList() {
         else rankHtml = '<div class="player-rank"><span class="player-rank-number">' + (index + 1) + '</span></div>';
 
         const kickBtn = (G.isHost && !isMe && (G.gamePhase === 'lobby' || G.gamePhase === 'home'))
-            ? '<button class="btn-kick" onclick="kickPlayer(\'' + id + '\')" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>'
+            ? '<button class="btn-kick" data-kick="' + esc(id) + '" title="Expulsar"><img src="' + ICONS.kick + '" alt="Kick"></button>'
             : '';
 
-        return '<div id="player-item-' + id + '" class="player-item" data-player-id="' + id + '">' + rankHtml +
+        return '<div class="player-item" data-player-id="' + esc(id) + '">' + rankHtml +
             '<div class="player-avatar">' + renderHexAvatar(id, 40) + '</div>' +
-            '<div class="player-info"><div class="player-name">' + p.name + (isMe ? ' (Tú)' : '') + '</div>' +
+            '<div class="player-info"><div class="player-name">' + esc(p.name) + (isMe ? ' (Tú)' : '') + '</div>' +
             (isHostPlayer ? '<div class="player-tag">Host</div>' : '') + '</div>' +
-            '<div class="player-score">' + score + '</div>' + kickBtn + '</div>';
+            '<div class="player-score">' + (Number(score) || 0) + '</div>' + kickBtn + '</div>';
     }).join('');
 
+    list.querySelectorAll('.btn-kick').forEach(function(btn) {
+        btn.onclick = function() { kickPlayer(btn.dataset.kick); };
+    });
+
     // Long-press para transferir host (v1.1.0)
-    if (G.isHost) playerIds.forEach(function(id) {
-        if (id !== G.myId) {
-            const el = document.getElementById('player-item-' + id);
-            if (el) setupLongPressForHost(el, id);
-        }
+    if (G.isHost) list.querySelectorAll('.player-item').forEach(function(el) {
+        const id = el.dataset.playerId;
+        if (id && id !== G.myId) setupLongPressForHost(el, id);
     });
 
     const btnDistribute = document.getElementById('btn-distribute');
@@ -1355,7 +1553,6 @@ function kickPlayer(playerId) {
         G.db.ref('rooms/' + G.channel + '/state').update({ scores: G.scores });
     }
 }
-window.kickPlayer = kickPlayer;
 
 // ── Transferencia de Host (v1.1.0, portada a RTDB) ───────────────
 // Manual: long-press 800ms sobre un jugador → menú de confirmación.
@@ -1388,7 +1585,10 @@ function showHostTransferMenu(playerId) {
     const menu = document.createElement('div');
     menu.id = 'host-transfer-menu';
     menu.className = 'host-transfer-menu';
-    menu.innerHTML = '<h3>¿Transferir host a ' + playerName + '?</h3><button class="host-transfer-btn" onclick="confirmHostTransfer(\'' + playerId + '\')">Sí, hacer host</button><button class="host-transfer-btn cancel" onclick="closeHostTransferMenu()">Cancelar</button>';
+    menu.innerHTML = '<h3>¿Transferir host a ' + esc(playerName) + '?</h3><button class="host-transfer-btn">Sí, hacer host</button><button class="host-transfer-btn cancel">Cancelar</button>';
+    const buttons = menu.querySelectorAll('button');
+    buttons[0].onclick = function() { confirmHostTransfer(playerId); };
+    buttons[1].onclick = closeHostTransferMenu;
     document.body.appendChild(menu);
 }
 
@@ -1405,12 +1605,13 @@ function confirmHostTransfer(newHostId) {
         if (res.committed) toast('Host transferido a ' + (G.players[newHostId]?.name || 'Jugador'), 'success');
     }).catch(function(e) { console.error('Error transfiriendo host:', e); });
 }
-window.confirmHostTransfer = confirmHostTransfer;
-window.closeHostTransferMenu = closeHostTransferMenu;
 
 function computeHostSuccessor(excludeId) {
+    // Con partida en curso solo puede heredar quien juega en ella: quien
+    // espera la siguiente no tiene roles ni controles de host en pantalla.
+    const inGame = G.gamePhase !== 'lobby' && G.gamePhase !== 'home' && Object.keys(G.fullRoles || {}).length > 0;
     const candidates = Object.keys(G.players).filter(function(id) {
-        return id !== excludeId && G.players[id] && G.players[id].online !== false;
+        return id !== excludeId && G.players[id] && G.players[id].online !== false && (!inGame || G.fullRoles[id]);
     });
     if (candidates.length === 0) return null;
     candidates.sort(function(a, b) {
@@ -1439,29 +1640,45 @@ function scheduleHostClaim() {
 // Gracia antes de eliminar a un jugador offline en partida.
 const DISCONNECT_GRACE = 10000;
 function scheduleOfflineElimination(id) {
-    if (G.offlineTimers[id] || G.eliminated.includes(id)) return;
+    // Solo cuenta para quien juega esta partida (no para quien espera)
+    if (G.offlineTimers[id] || G.eliminated.includes(id) || !G.activePlayers.includes(id)) return;
     G.offlineTimers[id] = setTimeout(function() {
         delete G.offlineTimers[id];
         const p = G.players[id];
         if (!p || p.online !== false) return; // volvió a tiempo
         if (G.gamePhase === 'lobby' || G.gamePhase === 'home' || G.gamePhase === 'gameover') return;
-        G.activePlayers = G.activePlayers.filter(function(pid) { return pid !== id; });
+        if (!G.activePlayers.includes(id)) return;
+        const without = function(arr) { return arr.filter(function(pid) { return pid !== id; }); };
+        G.activePlayers = without(G.activePlayers);
+        // También fuera de su bando: si no, checkGameOver seguía contando
+        // a un infiltrado desconectado y la partida no terminaba.
+        G.impostors  = without(G.impostors);
+        G.charlatans = without(G.charlatans);
+        G.citizens   = without(G.citizens);
         if (!G.eliminated.includes(id)) G.eliminated.push(id);
         renderPlayerList();
         updatePlayersSidebar();
         updateRolePlayersList();
+        if (G.isSpectator) updateSpectatorRoles();
         toast((p.name || 'Jugador') + ' se desconectó', 'warning');
         // El host escribe la eliminación al estado autoritativo; si no,
         // el siguiente cambio de fase la borraría al re-sincronizar.
         if (G.isHost && G.db && G.channel) {
             G.db.ref('rooms/' + G.channel + '/state').update({
                 activePlayers: G.activePlayers,
-                eliminated:    G.eliminated
+                eliminated:    G.eliminated,
+                impostors:     G.impostors,
+                charlatans:    G.charlatans,
+                citizens:      G.citizens
             }).catch(function(e) { console.error('Error registrando desconexión:', e); });
+            // Con la ronda sin votación de por medio, la desconexión
+            // puede decidir la partida (p. ej. se fue el último infiltrado)
+            if (G.gamePhase === 'roles' || G.gamePhase === 'round') checkGameOver();
         }
         // Si ya votaron todos los que quedan, el host cierra antes
+        const activeVoters = Array.from(G.votedPlayers).filter(function(v) { return G.activePlayers.includes(v); });
         if (G.isHost && G.gamePhase === 'voting' && !G.resultsPublished &&
-            G.votedPlayers.size >= G.activePlayers.length) {
+            activeVoters.length >= G.activePlayers.length) {
             publishResults();
         }
     }, DISCONNECT_GRACE);
@@ -1511,10 +1728,22 @@ function handleHostChange(wasIHost) {
 function becomeHost() {
     if (!G.db || !G.channel) return;
     attachVotesListener();
+    // Respaldo: si aun así hereda alguien que espera (p. ej. transferencia
+    // manual), lleva a todos a la sala para no dejar la partida colgada.
+    if (G.waitingNextGame) {
+        const ref = G.db.ref('rooms/' + G.channel + '/state/hostOnline');
+        ref.set(true).catch(function() {});
+        ref.onDisconnect().set(false);
+        backToLobby();
+        return;
+    }
     const hostOnlineRef = G.db.ref('rooms/' + G.channel + '/state/hostOnline');
     hostOnlineRef.set(true).catch(function(e) { console.error('Error marcando hostOnline:', e); });
     hostOnlineRef.onDisconnect().set(false);
     if (G.gamePhase === 'voting') scheduleHostVoteClose();
+    // El host anterior cayó con la ronda ya vencida: nadie había abierto
+    // la votación y la partida se quedaba colgada.
+    if (G.gamePhase === 'round' && G.roundEndTime && serverNow() >= G.roundEndTime) hostOpenVoting();
 }
 
 // Refresca los controles de host según fase (v1.1.0, adaptada)
@@ -1544,7 +1773,9 @@ function updateHostUI() {
 // ── Word Selection ───────────────────────────────────────────────
 
 function selectNewWord() {
-    updateSelectedCategories();
+    // Categorías de la sala (state/categories), no del DOM: el DOM de un
+    // host heredado o recargado tiene los valores por defecto.
+    if (!G.selectedCategories || G.selectedCategories.length === 0) G.selectedCategories = Object.keys(DB);
     let availableWords = [];
     G.selectedCategories.forEach(function(cat) {
         DB[cat].forEach(function(word) {
@@ -1565,14 +1796,16 @@ function selectNewWord() {
     G.currentSecretWord = secretData.word;
     G.usedWords.push(G.currentSecretWord);
 
-    // FIX: fake word must be from the SAME category as the secret word
+    // La palabra falsa es de la MISMA categoría. Si en esa categoría ya
+    // no quedan palabras sin usar, se toma cualquiera de ella (antes el
+    // charlatán recibía "???" y quedaba delatado).
+    const pick = function(arr) { return arr[Math.floor(Math.random() * arr.length)]; };
     const sameCatOptions = availableWords.filter(function(w) {
         return w.word !== G.currentSecretWord && w.category === G.currentCategory;
-    });
-    G.currentFakeWord = sameCatOptions.length > 0
-        ? sameCatOptions[Math.floor(Math.random() * sameCatOptions.length)].word
-        : '???';
-    if (G.currentFakeWord !== '???') G.usedWords.push(G.currentFakeWord);
+    }).map(function(w) { return w.word; });
+    const fallback = DB[G.currentCategory].filter(function(w) { return w !== G.currentSecretWord; });
+    G.currentFakeWord = sameCatOptions.length > 0 ? pick(sameCatOptions) : pick(fallback);
+    if (sameCatOptions.length > 0) G.usedWords.push(G.currentFakeWord);
 
     return { category: G.currentCategory, secretWord: G.currentSecretWord, fakeWord: G.currentFakeWord };
 }
@@ -1580,15 +1813,25 @@ function selectNewWord() {
 // ── Role Distribution ────────────────────────────────────────────
 
 function distributeRoles() {
-    if (!G.db) return;
-    const playerIds = Object.keys(G.players);
+    if (!G.db || !G.isHost) return;
+    let playerIds = Object.keys(G.players).filter(function(id) { return G.players[id] && G.players[id].online !== false; });
     if (playerIds.length < 3) { toast('Mínimo 3 jugadores', 'error'); return; }
+    // Tope de la sala: entran los que llegaron primero, el resto espera
+    if (playerIds.length > G.maxPlayers) {
+        playerIds = playerIds.sort(function(a, b) { return (G.players[a].joinedAt || 0) - (G.players[b].joinedAt || 0); }).slice(0, G.maxPlayers);
+        toast('Sala llena: juegan los primeros ' + G.maxPlayers, 'warning');
+    }
 
-    const numImp  = Math.min(parseInt(document.getElementById('config-impostors')?.value)  || 1, Math.floor(playerIds.length / 2));
-    const numChar = Math.min(parseInt(document.getElementById('config-charlatans')?.value) || 0, playerIds.length - numImp - 1);
-    updateSelectedCategories();
-    if (G.selectedCategories.length === 0) { toast('Selecciona categorías', 'error'); return; }
+    // Config de la sala (sincronizada desde state/), acotada a los
+    // jugadores reales: infiltrados < resto y al menos 1 ciudadano.
+    const numImp  = Math.min(G.numImpostors || 1, maxImpostorsFor(playerIds.length));
+    const numChar = Math.max(0, Math.min(G.numCharlatans || 0, playerIds.length - numImp - 1));
+    if (numImp < (G.numImpostors || 1) || numChar < (G.numCharlatans || 0)) {
+        toast('Con ' + playerIds.length + ' jugadores: ' + numImp + ' infiltrado(s), ' + numChar + ' charlatán(es)', 'warning');
+    }
 
+    G.gameOverPublished = false;
+    G.resultsPublished = false;
     const wordData = selectNewWord();
     let roles = {};
     let pool  = [...playerIds];
@@ -1699,11 +1942,10 @@ function handleSkipWord(msg) {
     document.getElementById('role-word').textContent = '???';
     document.getElementById('role-instruction').textContent = 'Toca la carta para revelar';
     hideRoleWordImage();
-    const starterInfo = document.getElementById('starter-info');
-    if (starterInfo) {
-        starterInfo.textContent = 'Inicia: ' + (G.players[G.starterPlayerId]?.name || 'Alguien');
-        starterInfo.style.display = 'block';
-    }
+    // Ya no se anuncia "Inicia: X" aquí: quien inicia se sortea al
+    // pulsar "Iniciar Ronda" y el aviso mostraba a otra persona.
+    const pointsBox = document.getElementById('points-box');
+    if (pointsBox) pointsBox.style.display = 'none';
     toast('Palabra cambiada', 'info');
 }
 
@@ -1746,9 +1988,9 @@ function handleAssign(msg) {
         hideRoleWordImage();
     } else {
         G.roleRevealed = true;
-        const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
+        const roleClass = roleClassOf(G.myRole.role);
         if (card) card.className = 'role-card ' + roleClass;
-        roleIcon.innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
+        roleIcon.innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
         roleTitle.textContent = G.myRole.role;
         roleWord.textContent  = G.myRole.word;
         roleInst.textContent  = 'Tu rol (ya revelado)';
@@ -1796,20 +2038,23 @@ function updateRoleWordImage() {
         return;
     }
     if (typeof fetch === 'undefined') return;
-    if (G.wordImageCache[word] !== undefined) {
-        renderWordImage(box, G.wordImageCache[word]);
+    // Clave por categoría: "Coco" es fruta y película, "Naranja" fruta y color
+    const cacheKey = (cat || '') + '|' + word;
+    if (G.wordImageCache[cacheKey] !== undefined) {
+        renderWordImage(box, G.wordImageCache[cacheKey]);
         return;
     }
-    const title = (window.WORD_IMAGE_TITLES || {})[word] || word;
+    const titles = window.WORD_IMAGE_TITLES || {};
+    const title = titles[(cat || '') + ':' + word] || titles[word] || word;
     fetch('https://es.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title))
         .then(function(r) { return r.ok ? r.json() : null; })
         .then(function(d) {
             const url = (d && d.type !== 'disambiguation' && d.thumbnail && d.thumbnail.source) || null;
-            G.wordImageCache[word] = url;
+            G.wordImageCache[cacheKey] = url;
             // Solo pintar si la carta sigue mostrando esta palabra
             if (G.myRole && G.myRole.word === word && G.roleRevealed) renderWordImage(box, url);
         })
-        .catch(function() { G.wordImageCache[word] = null; });
+        .catch(function() { G.wordImageCache[cacheKey] = null; });
 }
 
 function renderWordImage(box, url) {
@@ -1825,15 +2070,16 @@ function renderWordImage(box, url) {
 }
 
 function revealRole() {
-    if (G.roleRevealed) return;
+    if (G.roleRevealed || !G.myRole) return;
     G.roleRevealed = true;
+    playSound('reveal');
     const card = document.getElementById('role-card');
     if (card) card.classList.remove('blurred');
-    document.getElementById('role-icon').innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
+    document.getElementById('role-icon').innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
     document.getElementById('role-title').textContent = G.myRole.role;
     document.getElementById('role-word').textContent  = G.myRole.word;
     document.getElementById('role-instruction').textContent = 'Memoriza tu información';
-    const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
+    const roleClass = roleClassOf(G.myRole.role);
     if (card) card.classList.add(roleClass);
     updateRoleWordImage();
     showPointsReminder();
@@ -1845,16 +2091,14 @@ function showPointsReminder() {
     const list = document.getElementById('points-list');
     if (!box || !list) return;
     let html = '';
-    if (G.myRole.role === 'CIUDADANO') {
-        html = '<li><span class="points-value positive">+' + POINTS.CITIZEN_SURVIVE       + '</span> Sobrevivir</li>' +
-               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE  + '</span> Votar bien</li>' +
-               '<li><span class="points-value negative">'  + POINTS.CITIZEN_WRONG_VOTE    + '</span> Votar mal</li>';
-    } else if (G.myRole.role === 'INFILTRADO') {
-        html = '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_WIN           + '</span> Ganar</li>' +
-               '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_SURVIVE_ROUND + '</span> Sobrevivir ronda</li>';
+    // El charlatán ve el recordatorio de ciudadano: cree serlo.
+    if (G.myRole.role === 'INFILTRADO') {
+        html = '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_WIN           + '</span> Sobrevivir y ganar</li>' +
+               '<li><span class="points-value positive">+' + POINTS.IMPOSTOR_SURVIVE_ROUND + '</span> Por ronda sobrevivida</li>';
     } else {
-        html = '<li><span class="points-value positive">+' + POINTS.CHARLATAN_SURVIVE     + '</span> Sobrevivir</li>' +
-               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE  + '</span> Votar bien</li>';
+        html = '<li><span class="points-value positive">+' + POINTS.CITIZEN_SURVIVE       + '</span> Sobrevivir y ganar</li>' +
+               '<li><span class="points-value positive">+' + POINTS.CITIZEN_CORRECT_VOTE  + '</span> Votar al infiltrado</li>' +
+               '<li><span class="points-value negative">'  + POINTS.CITIZEN_WRONG_VOTE    + '</span> Votar a un inocente</li>';
     }
     list.innerHTML = html;
     box.style.display = 'block';
@@ -1895,7 +2139,7 @@ function showRoundStartOverlay(starterName, starterAvatar, starterFrame) {
         '<img src="' + avatar.image + '" alt="avatar" class="hex-avatar-img">' +
         (hasFrame ? '<div class="hex-avatar-frame"></div>' : '') +
         '</div>' +
-        '<p>Empieza: <span class="starter-name">' + starterName + '</span></p></div>';
+        '<p>Empieza: <span class="starter-name">' + esc(starterName) + '</span></p></div>';
     document.body.appendChild(overlay);
 }
 
@@ -1910,7 +2154,7 @@ function showStarterBanner(starterName) {
     const banner = document.createElement('div');
     banner.id = 'starter-banner';
     banner.className = 'starter-banner';
-    banner.innerHTML = '<img src="' + ICONS.play + '" alt="">Inicia: ' + starterName;
+    banner.innerHTML = '<img src="' + ICONS.play + '" alt="">Inicia: ' + esc(starterName);
     document.body.appendChild(banner);
 }
 
@@ -1931,10 +2175,10 @@ function handleStartRound(msg) {
     if (btnSkip)  btnSkip.style.display = 'none';
 
     const starterName = G.players[G.starterPlayerId]?.name || 'Alguien';
+    playSound('start');
 
     if (G.isSpectator) {
-        const btnSpecNext = document.getElementById('btn-spectator-next');
-        if (btnSpecNext) { btnSpecNext.style.display = 'none'; btnSpecNext.disabled = true; }
+        updateSpectatorHostControls(); // oculta Iniciar/Cambiar palabra
         const specStatus = document.getElementById('spectator-status');
         if (specStatus) specStatus.textContent = starterName + ' inicia!';
         setTimeout(function() { startSpectatorTimer(); }, ROUND_START_DISPLAY_TIME);
@@ -1966,15 +2210,18 @@ function startTimer() {
     document.getElementById('wait-message').style.display = 'none';
     document.getElementById('points-box').style.display  = 'none';
     let fired = false;
+    let lastBeep = null;
     const tick = function() {
         const remaining = Math.max(0, Math.ceil((G.roundEndTime - serverNow()) / 1000));
         updateTimerDisplay(remaining);
         if (remaining <= 10) timer.classList.add('warning');
+        if (remaining > 0 && remaining <= 5 && remaining !== lastBeep) { lastBeep = remaining; playSound('tick'); }
         if (remaining <= 0 && !fired) {
             fired = true;
             clearInterval(G.timerInterval);
             G.timerInterval = null;
             timer.textContent = '¡TIEMPO!';
+            playSound('timeup');
             if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
             hostOpenVoting();
             // Los no-host esperan el cambio de fase vía onStateChange
@@ -2034,10 +2281,13 @@ function updateTimerDisplay(seconds) {
 function startVoting() {
     if (G.timerInterval) clearInterval(G.timerInterval);
     hideStarterBanner();
+    playSound('voting');
     if (G.isSpectator) {
         const specStatus = document.getElementById('spectator-status');
         if (specStatus) specStatus.textContent = 'Votación...';
         showScreen('screen-spectator');
+        updateSpectatorVotes();
+        updateSpectatorHostControls();
         scheduleHostVoteClose(); // host-espectador también cierra la votación
         return;
     }
@@ -2072,8 +2322,8 @@ function renderVotingList() {
     list.innerHTML = votable.map(function(id) {
         return '<div class="vote-item">' +
             '<div class="vote-avatar">' + renderHexAvatar(id, 48) + '</div>' +
-            '<div class="player-info"><div class="player-name">' + (G.players[id]?.name || id) + '</div></div>' +
-            '<button class="btn-vote' + (iVoted ? ' voted' : '') + '" data-target="' + id + '"' +
+            '<div class="player-info"><div class="player-name">' + esc(G.players[id]?.name || 'Jugador') + '</div></div>' +
+            '<button class="btn-vote' + (iVoted ? ' voted' : '') + '" data-target="' + esc(id) + '"' +
             (iVoted ? ' disabled' : '') + '>' +
             (iVoted ? 'Votado' : 'Votar') + '</button></div>';
     }).join('');
@@ -2131,6 +2381,7 @@ function sendVote(targetId, button) {
     if (!G.db || G.eliminated.includes(targetId) || !G.activePlayers.includes(targetId) || G.hasVotedThisRound) return;
     if (G.voteEndTime && serverNow() >= G.voteEndTime) { toast('Tiempo agotado', 'warning'); return; }
     G.hasVotedThisRound = true;
+    playSound('vote');
     // Each player writes their own vote to Firebase (clave propia → sin conflicto)
     G.db.ref('rooms/' + G.channel + '/votes/' + G.myId).set(targetId)
         .catch(function(e) { console.error('Error registrando voto:', e); });
@@ -2191,28 +2442,30 @@ function finalizeResults() {
             eliminatedRole = 'CIUDADANO';
             G.citizens = G.citizens.filter(id => id !== eliminatedId);
         }
-
-        // Points for voters
-        Object.entries(G.voteTargets).forEach(function([voterId, targetId]) {
-            if (targetId === eliminatedId) {
-                if (eliminatedRole === 'INFILTRADO') {
-                    G.scores[voterId] = (G.scores[voterId] || 0) + POINTS.CITIZEN_CORRECT_VOTE;
-                } else if (!G.impostors.includes(voterId)) {
-                    G.scores[voterId] = (G.scores[voterId] || 0) + POINTS.CITIZEN_WRONG_VOTE;
-                }
-            }
-        });
-
-        // Impostors survive-round bonus
-        G.impostors.forEach(function(id) {
-            G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_SURVIVE_ROUND;
-        });
     }
+
+    // Puntos por voto, tal como se anuncian: cada ciudadano/charlatán
+    // gana +7 si votó a un infiltrado y pierde 3 si votó a un inocente,
+    // haya o no eliminación. Los infiltrados no puntúan por votar.
+    // (Antes solo contaba el voto al eliminado y el infiltrado que
+    // votaba a su compañero eliminado se llevaba +7.)
+    const wasImpostor = function(id) { return (G.trueRoles[id] || G.fullRoles[id]?.role) === 'INFILTRADO'; };
+    Object.entries(G.voteTargets).forEach(function([voterId, targetId]) {
+        if (wasImpostor(voterId)) return;
+        G.scores[voterId] = (G.scores[voterId] || 0) +
+            (wasImpostor(targetId) ? POINTS.CITIZEN_CORRECT_VOTE : POINTS.CITIZEN_WRONG_VOTE);
+    });
+
+    // +5 por ronda sobrevivida a cada infiltrado que sigue en juego,
+    // también si la ronda terminó en empate.
+    G.impostors.forEach(function(id) {
+        G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_SURVIVE_ROUND;
+    });
 
     const resultsPayload = {
         votes:         G.votes,
         eliminatedId:  eliminatedId,
-        eliminatedName: eliminatedId ? G.players[eliminatedId]?.name : null,
+        eliminatedName: eliminatedId ? (G.players[eliminatedId]?.name || 'Jugador') : null,
         eliminatedRole: eliminatedRole,
         isTie:         isTie,
         scores:        G.scores,
@@ -2234,7 +2487,9 @@ function finalizeResults() {
         results:       resultsPayload
     }).catch(function(e) { console.error('Error publicando resultados:', e); });
 
-    setTimeout(checkGameOver, RESULT_DISPLAY_TIME);
+    // Solo si seguimos en resultados: si el host ya volvió a la sala,
+    // un fin de partida tardío lo sacaba del lobby.
+    setTimeout(function() { if (G.gamePhase === 'results') checkGameOver(); }, RESULT_DISPLAY_TIME);
 }
 
 // Overlay "contando votos" (v1.1.0): feedback entre el cierre de la
@@ -2261,7 +2516,7 @@ function showYouEliminatedOverlay(role) {
     overlay.className = 'you-eliminated-overlay';
     overlay.innerHTML = '<div class="you-eliminated-message">' +
         '<h1>HAS SIDO EXPULSADO</h1>' +
-        '<p>Eras ' + role + '</p>' +
+        '<p>Eras ' + esc(role) + '</p>' +
         '</div>';
     document.body.appendChild(overlay);
 }
@@ -2285,6 +2540,7 @@ function showResults(msg) {
     }
     updatePlayersSidebar();
     updateRolePlayersList();
+    playSound(msg.eliminatedId === G.myId ? 'lose' : msg.isTie ? 'tie' : 'eliminated');
 
     if (msg.eliminatedId === G.myId) {
         G.isSpectator = true;
@@ -2302,7 +2558,7 @@ function showResults(msg) {
     }
 
     if (G.isSpectator) {
-        document.getElementById('spectator-status').textContent = msg.isTie ? 'Empate' : msg.eliminatedName + ' eliminado';
+        document.getElementById('spectator-status').textContent = msg.isTie ? 'Empate' : (msg.eliminatedName || 'Jugador') + ' eliminado';
         updateSpectatorRoles();
         updateSpectatorHostControls();
         return;
@@ -2320,9 +2576,9 @@ function showResults(msg) {
                 '<div class="result-header">' +
                 '<div class="result-player">' +
                 '<div class="result-avatar">' + renderHexAvatar(id, 36) + '</div>' +
-                '<span class="result-name">' + (G.players[id]?.name || id) + '</span>' +
+                '<span class="result-name">' + esc(G.players[id]?.name || 'Jugador') + '</span>' +
                 '</div>' +
-                '<span class="result-votes">' + count + ' votos</span>' +
+                '<span class="result-votes">' + (Number(count) || 0) + ' votos</span>' +
                 '</div>' +
                 '<div class="result-bar"><div class="result-bar-fill" style="width:' + (count / maxVotes * 100) + '%"></div></div>' +
                 '</div>';
@@ -2340,10 +2596,10 @@ function showResults(msg) {
             const iconSrc = msg.eliminatedRole === 'INFILTRADO' ? ICONS.impostor :
                             msg.eliminatedRole === 'CHARLATÁN'  ? ICONS.charlatan : ICONS.citizen;
             elimBox.innerHTML = '<div class="eliminated-message">Ha sido expulsado</div>' +
-                '<div class="eliminated-name">' + msg.eliminatedName + '</div>' +
+                '<div class="eliminated-name">' + esc(msg.eliminatedName || 'Jugador') + '</div>' +
                 '<div class="eliminated-role-container">' +
                 '<img src="' + iconSrc + '" alt="" class="eliminated-role-icon">' +
-                '<span class="eliminated-role">Era <strong>' + msg.eliminatedRole + '</strong></span></div>';
+                '<span class="eliminated-role">Era <strong>' + esc(msg.eliminatedRole) + '</strong></span></div>';
         }
     }
 
@@ -2363,6 +2619,9 @@ function showResults(msg) {
 
 function nextRound() {
     if (!G.db || !G.isHost) return;
+    // Si la partida ya está decidida (el host pulsó antes de que corriera
+    // el chequeo diferido), se termina en vez de abrir otra ronda.
+    if (computeWinner()) { checkGameOver(); return; }
     const btnNext = document.getElementById('btn-next-round');
     if (btnNext) btnNext.disabled = true;
     G.resultsPublished = false;
@@ -2379,9 +2638,8 @@ function nextRound() {
 
 function spectatorNextAction() {
     if (!G.isHost) return;
-    const btn = document.getElementById('btn-spectator-next');
-    if (btn && btn.textContent.includes('Iniciar')) startRound();
-    else nextRound();
+    if (G.gamePhase === 'roles') startRound();
+    else if (G.gamePhase === 'results') nextRound();
 }
 
 function handleNextRound(msg) {
@@ -2406,14 +2664,15 @@ function handleNextRound(msg) {
         updateSpectatorHostControls();
         return;
     }
+    if (!G.myRole) return;
 
     const card     = document.getElementById('role-card');
     const btnStart = document.getElementById('btn-start-round');
     const btnSkip  = document.getElementById('btn-skip-word');
     G.roleRevealed = true;
-    const roleClass = G.myRole.role === 'INFILTRADO' ? 'impostor' : G.myRole.role === 'CHARLATÁN' ? 'charlatan' : 'citizen';
+    const roleClass = roleClassOf(G.myRole.role);
     if (card) card.className = 'role-card ' + roleClass;
-    document.getElementById('role-icon').innerHTML = '<img src="' + G.myRole.icon + '" alt="" class="role-icon-img">';
+    document.getElementById('role-icon').innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
     document.getElementById('role-title').textContent = G.myRole.role;
     document.getElementById('role-word').textContent  = G.myRole.word;
     document.getElementById('role-instruction').textContent = 'Tu rol (conocido)';
@@ -2438,12 +2697,21 @@ function handleNextRound(msg) {
 
 // ── Game Over ────────────────────────────────────────────────────
 
+// Condición de victoria sin efectos: ciudadanos si no quedan
+// infiltrados; infiltrados si igualan o superan al resto.
+function computeWinner() {
+    if (G.impostors.length === 0) return 'CIUDADANOS';
+    if (G.activePlayers.length - G.impostors.length <= G.impostors.length) return 'INFILTRADOS';
+    return null;
+}
+
 function checkGameOver() {
-    if (!G.isHost || !G.db) return;
-    let winner = null;
+    if (!G.isHost || !G.db || G.gameOverPublished) return;
+    const winner = computeWinner();
+    if (!winner) return;
+    G.gameOverPublished = true; // los puntos finales se suman una sola vez
     let reason = '';
-    if (G.impostors.length === 0) {
-        winner = 'CIUDADANOS';
+    if (winner === 'CIUDADANOS') {
         reason = 'Infiltrados eliminados';
         G.citizens.forEach(function(id) {
             if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CITIZEN_SURVIVE;
@@ -2451,20 +2719,17 @@ function checkGameOver() {
         G.charlatans.forEach(function(id) {
             if (G.activePlayers.includes(id)) G.scores[id] = (G.scores[id] || 0) + POINTS.CHARLATAN_SURVIVE;
         });
-    } else if (G.activePlayers.length - G.impostors.length <= G.impostors.length) {
-        winner = 'INFILTRADOS';
+    } else {
         reason = 'Infiltrados dominan';
         G.impostors.forEach(function(id) {
             G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_WIN;
         });
     }
-    if (winner) {
-        G.db.ref('rooms/' + G.channel + '/state').update({
-            gamePhase: 'gameover',
-            scores:    G.scores,
-            gameOver:  { winner: winner, reason: reason, scores: G.scores, roles: G.fullRoles }
-        });
-    }
+    G.db.ref('rooms/' + G.channel + '/state').update({
+        gamePhase: 'gameover',
+        scores:    G.scores,
+        gameOver:  { winner: winner, reason: reason, scores: G.scores, roles: G.fullRoles }
+    });
 }
 
 function handleGameOver(msg) {
@@ -2482,13 +2747,19 @@ function handleGameOver(msg) {
     document.getElementById('gameover-title').textContent  = '¡' + msg.winner + ' GANAN!';
     document.getElementById('gameover-reason').textContent = msg.reason;
     document.getElementById('gameover-icon').src = msg.winner === 'INFILTRADOS' ? ICONS.impostor : ICONS.celebrate;
+    const iAmImpostor = trueRoleOf(G.myId) === 'INFILTRADO';
+    playSound((msg.winner === 'INFILTRADOS') === iAmImpostor ? 'win' : 'lose');
 
     const scoresList = document.getElementById('final-scores');
     if (!scoresList) return;
-    const sorted     = Object.entries(G.scores).sort((a, b) => b[1] - a[1]);
+    // Solo quienes jugaron esta partida (no quien esperaba la siguiente)
+    const playedIds = Object.keys(G.fullRoles || {});
+    const sorted = (playedIds.length ? playedIds : Object.keys(G.scores))
+        .map(function(id) { return [id, G.scores[id] || 0]; })
+        .sort((a, b) => b[1] - a[1]);
     scoresList.innerHTML = '<div class="final-scores-list">' + sorted.map(function([id, score], idx) {
         const p    = G.players[id];
-        const role = G.fullRoles[id];
+        const role = trueRoleOf(id); // al final se revela al charlatán
         let rankHtml = '';
         if (idx === 0)      rankHtml = '<div class="score-rank"><img src="' + ICONS.medalGold   + '" alt="1"></div>';
         else if (idx === 1) rankHtml = '<div class="score-rank"><img src="' + ICONS.medalSilver + '" alt="2"></div>';
@@ -2497,10 +2768,10 @@ function handleGameOver(msg) {
         return '<div class="score-item">' + rankHtml +
             '<div class="score-avatar">' + renderHexAvatar(id, 44) + '</div>' +
             '<div class="score-info">' +
-            '<div class="score-name">'  + (p?.name   || id) + '</div>' +
-            '<div class="score-role">'  + (role?.role || '') + '</div>' +
+            '<div class="score-name">'  + esc(p?.name || 'Jugador') + '</div>' +
+            '<div class="score-role">'  + esc(role) + '</div>' +
             '</div>' +
-            '<div class="score-points">' + score + '</div>' +
+            '<div class="score-points">' + (Number(score) || 0) + '</div>' +
             '</div>';
     }).join('') + '</div>';
 }
@@ -2528,6 +2799,9 @@ function handleBackToLobby(msg) {
     G.hostId    = msg.hostId   || G.hostId;
     G.isHost    = (G.myId === G.hostId);
     G.usedWords = msg.usedWords || G.usedWords;
+    // En la sala solo se listan los conectados (en partida se conservaban
+    // los caídos para mostrar su nombre)
+    Object.keys(G.players).forEach(function(id) { if (G.players[id] && G.players[id].online === false) delete G.players[id]; });
     resetGameState();
     showScreen('screen-lobby');
     const btn = document.getElementById('btn-distribute');
@@ -2557,8 +2831,10 @@ function resetGameState() {
     G.starterPlayerId = null;
     G.isFirstRound   = true;
     G.roundStarting  = false;
-    G.roundInProgress = false;
     G.resultsPublished = false;
+    G.gameOverPublished = false;
+    G.waitingNextGame = false;
+    setLobbyNotice('');
     G.hasVotedThisRound = false;
     G.roundEndTime   = null;
     G.voteEndTime    = null;
@@ -2601,6 +2877,14 @@ function exitGame() {
     showScreen('screen-home');
 }
 
+// Aviso en la sala de espera (p. ej. "partida en curso"); vacío = oculto
+function setLobbyNotice(text) {
+    const el = document.getElementById('lobby-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.display = text ? 'block' : 'none';
+}
+
 // ── Spectator Helpers ────────────────────────────────────────────
 
 function updateSpectatorRoles() {
@@ -2613,8 +2897,8 @@ function updateSpectatorRoles() {
         return '<div class="player-item" style="opacity:' + (isActive ? 1 : 0.5) + '">' +
             '<div class="player-avatar">' + renderHexAvatar(id, 36) + '</div>' +
             '<div class="player-info">' +
-            '<div class="player-name">' + (p?.name || id) + '</div>' +
-            '<div class="player-tag">'  + role.role + ' - ' + role.word + '</div>' +
+            '<div class="player-name">' + esc(p?.name || 'Jugador') + '</div>' +
+            '<div class="player-tag">'  + esc(trueRoleOf(id) + ' - ' + role.word) + '</div>' +
             '</div>' +
             '<img src="' + statusIcon + '" alt="" class="player-status-icon">' +
             '</div>';
@@ -2632,10 +2916,11 @@ function updateSpectatorVotes() {
         return '<div class="player-item">' +
             '<div class="player-avatar">' + renderHexAvatar(id, 36) + '</div>' +
             '<div class="player-info">' +
-            '<div class="player-name">' + (p?.name || id) + '</div>' +
+            '<div class="player-name">' + esc(p?.name || 'Jugador') + '</div>' +
             '<div class="player-tag">'  + (hasVoted ? 'Ha votado' : 'Pendiente') + '</div>' +
             '</div>' +
-            '<span>' + votes + ' votos</span>' +
+            '<span>' + (Number(votes) || 0) + ' votos</span>' +
+            '<img src="' + statusIcon + '" alt="" class="player-status-icon">' +
             '</div>';
     }).join('');
 }

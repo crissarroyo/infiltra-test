@@ -1,5 +1,5 @@
 /**
- * INFILTRA v2.1.0 — Ilustración de palabras
+ * INFILTRA v2.2.0 — Ilustración de palabras
  *
  * La imagen se resuelve en el navegador contra la API pública de
  * Wikipedia en español (sin clave, CORS abierto):
@@ -79,6 +79,9 @@ window.WORD_IMAGE_TITLES = {
     "Volver al Futuro": "Volver al futuro",
     "Madagascar": "Madagascar (película)",
     "Moana": "Moana (película de 2016)",
+    // Clave "Categoría:Palabra" para palabras que están en dos
+    // categorías (sin ella, la película Coco mostraba un coco)
+    "Películas:Coco": "Coco (película)",
     // Superhéroes
     "Flash": "Flash (DC Comics)",
     "Thor": "Thor (Marvel Comics)",

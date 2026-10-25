@@ -18,6 +18,14 @@ duplicados, cierre de pestaña (onDisconnect + gracia), usedWords
 agotado, transferencia manual de host y carrera de transferencias,
 gameover por infiltrados eliminados y por dominio de infiltrados.
 
+v2.2.0 agrega: controles del host eliminado por fase, jugador que
+entra a mitad de partida (espera la siguiente), config de sala y
+charlatán tras cambio de host, puntos +7/-3 por voto y +5 en empate,
+volver a sala / siguiente ronda antes del chequeo de fin, host que cae
+con la ronda vencida, nombres con HTML, último infiltrado desconectado,
+sala inexistente y límites de configuración, sonido y silencio, y
+jugador en espera que no hereda el host a mitad de partida.
+
 Nota: el mock no sustituye una partida real contra el Firebase de
 producción (latencia, reglas de seguridad); esa verificación se hace
 en el GitHub Pages de test antes de promocionar.

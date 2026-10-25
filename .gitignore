@@ -1,0 +1,4 @@
+# Dependencias del arnés de pruebas (se instalan con npm, ver test/README.md)
+test/node_modules/
+test/package.json
+test/package-lock.json

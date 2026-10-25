@@ -230,11 +230,6 @@ p {
     letter-spacing: 0.1em;
 }
 
-.logo-icon {
-    color: var(--color-accent-gold);
-    font-size: 1.75rem;
-}
-
 .logo-text {
     color: var(--color-text-primary);
 }
@@ -583,11 +578,6 @@ p {
     text-align: center;
 }
 
-.card-icon {
-    font-size: 3rem;
-    margin-bottom: var(--space-sm);
-}
-
 .card-label {
     font-family: var(--font-display);
     font-size: 1rem;
@@ -853,11 +843,6 @@ p {
     line-height: 1;
 }
 
-.step-icon {
-    font-size: 2.5rem;
-    margin-bottom: var(--space-md);
-}
-
 .step-card h3 {
     color: var(--color-text-primary);
     margin-bottom: var(--space-sm);
@@ -1011,24 +996,6 @@ p {
     border-color: var(--color-accent-gold);
 }
 
-.feature-icon {
-    font-size: 2rem;
-    margin-bottom: var(--space-md);
-}
-
-.feature-icon-text {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 48px;
-    height: 48px;
-    background: rgba(201, 162, 39, 0.15);
-    border-radius: var(--radius-md);
-    font-size: 1.5rem;
-    color: var(--color-accent-gold);
-    margin-bottom: var(--space-md);
-}
-
 .feature-card h3 {
     color: var(--color-text-primary);
     margin-bottom: var(--space-sm);
@@ -1168,23 +1135,6 @@ p {
 
 .contact-item:hover {
     border-color: var(--color-accent-gold);
-}
-
-.contact-icon {
-    font-size: 2rem;
-}
-
-.contact-icon-text {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 48px;
-    height: 48px;
-    background: rgba(201, 162, 39, 0.15);
-    border-radius: var(--radius-md);
-    font-size: 1.5rem;
-    color: var(--color-accent-gold);
-    flex-shrink: 0;
 }
 
 .contact-item h4 {
