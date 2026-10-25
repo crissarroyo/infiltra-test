@@ -675,7 +675,7 @@ async function s22() {
     const eva = byName(all, 'Eva');
     eva.eval('exitGame()');            // sale antes del reparto (conserva su joinedAt)
     await world.tick(500);
-    host.eval('distributeRoles()');
+    distributeLastIsImpostor(host);    // el host no es el infiltrado (ver S19)
     await world.tick(1000);
     host.eval('startRound()');
     await world.tick(5000);
@@ -729,8 +729,162 @@ async function s23() {
     check('S23 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
 }
 
+// ── S24: la carta se revela y se oculta con cada toque ──────────
+async function s24() {
+    console.log('S24: tocar la carta revela y vuelve a ocultar');
+    const { db, world } = freshWorld();
+    const { host, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+    distributeLastIsImpostor(host);
+    await world.tick(1000);
+    const beto = byName(all, 'Beto');
+    const card = () => beto.w.document.getElementById('role-card');
+    check('S24 empieza oculta', card().classList.contains('blurred') && beto.text('role-word') === '???');
+    beto.click('role-card');
+    check('S24 primer toque revela', !card().classList.contains('blurred') && beto.text('role-word') === beto.G().myRole.word, beto.text('role-word'));
+    check('S24 recordatorio de puntos al revelar', beto.w.document.getElementById('points-box').style.display === 'block');
+    beto.click('role-card');
+    check('S24 segundo toque oculta', card().classList.contains('blurred') && beto.text('role-word') === '???', beto.text('role-word'));
+    beto.click('role-card');
+    check('S24 tercer toque revela otra vez', !card().classList.contains('blurred') && beto.G().roleRevealed === true);
+    host.eval('startRound()');
+    await world.tick(4500);
+    beto.click('role-card');
+    check('S24 también se oculta durante la ronda', card().classList.contains('blurred'));
+    check('S24 el recordatorio no reaparece en la ronda', beto.w.document.getElementById('points-box').style.display === 'none');
+    check('S24 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
+}
+
+// ── S25: fin de partida para espectadores y para todos ──────────
+async function s25() {
+    console.log('S25: fin de partida (espectador, resumen, espera, nueva partida, host que se va)');
+    {
+        const { db, world } = freshWorld();
+        const { host, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+        distributeLastIsImpostor(host); // Caro infiltrada
+        await world.tick(1000);
+        host.eval('startRound()');
+        await tickToVoting(world);
+        const plan = { Ana: 'Beto', Caro: 'Beto', Beto: 'Caro' };
+        await voteAll(world, all, (c) => idOf(all, plan[c.name]));
+        const beto = byName(all, 'Beto'), caro = byName(all, 'Caro');
+        await world.tick(3500);
+        check('S25 expulsado pasa a espectador', beto.G().isSpectator && beto.screen() === 'screen-spectator', beto.screen());
+        await world.tick(3000);
+        check('S25 todos ven el final (también el espectador)', all.every(c => c.screen() === 'screen-gameover'), all.map(c => c.screen()).join(','));
+        check('S25 ganan infiltrados', host.text('gameover-title').includes('INFILTRADOS'), host.text('gameover-title'));
+        const summary = beto.text('game-summary');
+        const secret = host.G().fullRoles[idOf(all, 'Ana')].word;
+        check('S25 resumen con la palabra secreta', summary.includes(secret), summary);
+        check('S25 resumen revela al infiltrado', summary.includes('Caro'), summary);
+        check('S25 historial de la ronda', summary.includes('Beto fue expulsado') && summary.includes('CIUDADANO'), summary);
+        check('S25 no-host ve "esperando al host"', beto.w.document.getElementById('gameover-wait').style.display === 'block' &&
+            caro.w.document.getElementById('gameover-wait').style.display === 'block' &&
+            host.w.document.getElementById('gameover-wait').style.display === 'none');
+        check('S25 solo el host tiene "Volver a sala"', host.w.document.getElementById('btn-back-to-lobby').style.display === 'block' &&
+            beto.w.document.getElementById('btn-back-to-lobby').style.display === 'none');
+        check('S25 barra de reacciones en el final', !!beto.w.document.querySelector('#screen-gameover .reaction-bar'));
+        host.eval('backToLobby()');
+        await world.tick(1000);
+        check('S25 todos vuelven a la sala', all.every(c => c.screen() === 'screen-lobby'), all.map(c => c.screen()).join(','));
+        check('S25 el espectador deja de serlo', beto.G().isSpectator === false);
+        check('S25 historial limpio para la siguiente', all.every(c => (c.G().history || []).length === 0));
+        host.eval('distributeRoles()');
+        await world.tick(1000);
+        check('S25 el ex espectador juega la nueva partida', !!beto.G().myRole && beto.screen() === 'screen-role', beto.screen());
+        check('S25 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
+    }
+    {
+        // Carrera: el host pulsa "siguiente" con la partida decidida antes de
+        // que el expulsado pase a espectador → el final no se tapa.
+        const { db, world } = freshWorld();
+        const { host, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+        distributeLastIsImpostor(host);
+        await world.tick(1000);
+        host.eval('startRound()');
+        await tickToVoting(world);
+        const plan = { Ana: 'Caro', Beto: 'Caro', Caro: 'Ana' };
+        await voteAll(world, all, (c) => idOf(all, plan[c.name]));
+        host.eval('nextRound()');
+        await world.tick(4500);
+        const caro = byName(all, 'Caro');
+        check('S25 el expulsado se queda en el final', caro.screen() === 'screen-gameover', caro.screen());
+        check('S25 sin overlay colgado', !caro.w.document.getElementById('you-eliminated-overlay'));
+    }
+    {
+        // El host se va en la pantalla final: el nuevo host puede volver a la sala
+        const { db, world } = freshWorld();
+        const { host, others, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+        distributeLastIsImpostor(host);
+        await world.tick(1000);
+        host.eval('startRound()');
+        await tickToVoting(world);
+        await voteAll(world, all, (c) => c.name === 'Caro' ? idOf(all, 'Ana') : idOf(all, 'Caro'));
+        await world.tick(6000);
+        check('S25b fin de partida', others.every(c => c.G().gamePhase === 'gameover'));
+        host.disconnect();
+        await world.tick(12000);
+        const newHost = others.find(c => c.G().isHost);
+        check('S25b hay nuevo host en el final', !!newHost);
+        if (newHost) {
+            check('S25b el nuevo host ve "Volver a sala"', newHost.w.document.getElementById('btn-back-to-lobby').style.display === 'block');
+            newHost.eval('backToLobby()');
+            await world.tick(1000);
+            check('S25b todos en la sala', others.every(c => c.screen() === 'screen-lobby'), others.map(c => c.screen()).join(','));
+        }
+    }
+}
+
+// ── S26: reacciones y ajustes ────────────────────────────────────
+async function s26() {
+    console.log('S26: reacciones rápidas y ajustes persistentes');
+    const { db, world } = freshWorld();
+    const { host, all } = await makeRoom(db, world, ['Ana', 'Beto', 'Caro']);
+    distributeLastIsImpostor(host);
+    await world.tick(1000);
+    host.eval('startRound()');
+    await tickToVoting(world);
+    const beto = byName(all, 'Beto');
+    check('S26 barra de reacciones en votación', beto.w.document.querySelectorAll('#screen-voting .btn-reaction').length === 7);
+    beto.w.document.querySelector('#screen-voting .btn-reaction[data-e="😂"]').click();
+    await world.tick(300);
+    const bubbles = (c) => Array.from(c.w.document.querySelectorAll('.reaction-bubble')).map(b => b.textContent);
+    check('S26 los demás ven la reacción con el nombre', bubbles(host).some(t => t.includes('😂') && t.includes('Beto')), JSON.stringify(bubbles(host)));
+    check('S26 quien reacciona la ve como "Tú"', bubbles(beto).some(t => t.includes('Tú')));
+    beto.eval("sendReaction('😱')");
+    await world.tick(300);
+    check('S26 sin spam (1 por segundo)', !bubbles(host).some(t => t.includes('😱')));
+    await world.tick(1500);
+    beto.eval("sendReaction('<img src=x>')");
+    db._set(['rooms', host.G().channel, 'players', idOf(all, 'Caro'), 'reaction'], { e: '<b id=pwn>', t: world.nowMs });
+    await world.tick(300);
+    check('S26 emojis fuera de la lista se ignoran', !host.w.document.getElementById('pwn') && !bubbles(host).some(t => t.includes('<')));
+    await world.tick(3000);
+    check('S26 las burbujas desaparecen', bubbles(host).length === 0, JSON.stringify(bubbles(host)));
+    // Ajustes
+    beto.click('btn-settings');
+    const sm = beto.w.document.getElementById('settings-modal');
+    check('S26 ajustes abre con su botón', sm.hidden === false);
+    const clicks = beto.w.document.getElementById('set-clicks');
+    clicks.checked = false;
+    clicks.dispatchEvent(new beto.w.Event('change'));
+    const sfx = beto.w.document.getElementById('set-sfx');
+    sfx.value = '30';
+    sfx.dispatchEvent(new beto.w.Event('input'));
+    const saved = JSON.parse(beto.w.localStorage.getItem('infiltra_settings') || '{}');
+    check('S26 ajustes guardados', saved.clicks === false && Math.abs(saved.sfx - 0.3) < 0.01, JSON.stringify(saved));
+    beto.click('btn-help');
+    check('S26 abrir ayuda cierra ajustes', sm.hidden === true && beto.w.document.getElementById('help-modal').hidden === false);
+    beto.click('btn-help');
+    const motion = beto.w.document.getElementById('set-motion');
+    beto.click('btn-settings');
+    motion.checked = true;
+    motion.dispatchEvent(new beto.w.Event('change'));
+    check('S26 reducir animaciones aplica clase', beto.w.document.body.classList.contains('reduce-motion'));
+    check('S26 sin errores JS', all.every(c => c.errors.length === 0), JSON.stringify(all.map(c => c.errors).flat()));
+}
+
 (async () => {
-    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23];
+    const scenarios = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14, s15, s16, s17, s18, s19, s20, s21, s22, s23, s24, s25, s26];
     for (const s of scenarios) {
         try { await s(); }
         catch (e) { results.push({ name: s.name + ' (excepción)', ok: false, detail: e.stack?.split('\n').slice(0, 3).join(' | ') }); console.log('  EXCEPTION in ' + s.name + ': ' + e.message); }

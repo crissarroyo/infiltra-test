@@ -1,5 +1,5 @@
 /* ========================================
-   INFILTRA v2.3.0 — Capa de juego
+   INFILTRA v2.4.0 — Capa de juego
    Animaciones, profundidad y ventana de ayuda sobre game-styles.css.
    Misma paleta (oro sobre azul noche) y tipografías.
    ======================================== */
@@ -569,6 +569,231 @@ body.help-open { overflow: hidden; }
 @media (min-width: 769px) {
     .help-roles { grid-template-columns: 1fr; }
 }
+
+/* ---------- Ajustes (v2.4.0) ---------- */
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.7rem 0.85rem;
+    margin-bottom: 0.45rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+}
+
+.setting-row label { color: var(--color-text-primary); font-size: 0.95rem; display: flex; flex-direction: column; }
+.setting-row label small { color: var(--color-text-muted); font-size: 0.78rem; margin-top: 2px; }
+.setting-row.disabled { opacity: 0.45; pointer-events: none; }
+
+.setting-row input[type=range] { width: 46%; accent-color: var(--color-accent-gold); cursor: pointer; }
+
+.switch {
+    appearance: none;
+    -webkit-appearance: none;
+    flex-shrink: 0;
+    width: 48px;
+    height: 28px;
+    border-radius: 999px;
+    background: var(--color-steel-dark);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.switch::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #cfcfcf;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.switch:checked { background: var(--color-accent-gold-dark); border-color: var(--color-accent-gold); }
+.switch:checked::after { transform: translateX(20px); background: #fff6d6; }
+.switch:focus-visible, .setting-row input[type=range]:focus-visible { outline: 2px solid var(--color-accent-gold-light); outline-offset: 2px; }
+
+.settings-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; margin-top: var(--space-lg); }
+.settings-actions .btn { padding: 0.75rem 0.5rem; font-size: 0.8rem; }
+.settings-note { margin-top: var(--space-md); font-size: 0.82rem; color: var(--color-text-muted); text-align: center; }
+
+/* ---------- Reacciones (v2.4.0) ---------- */
+.reaction-bar {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+    margin-top: var(--space-md);
+    padding: 0.35rem 0.45rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 18px;
+}
+
+.btn-reaction {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 44px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    font-size: 1.25rem;
+    line-height: 1;
+    background: rgba(255, 255, 255, 0.04);
+    transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.btn-reaction:hover { background: rgba(201, 162, 39, 0.18); transform: translateY(-2px) scale(1.1); }
+.btn-reaction:active { transform: scale(0.9); }
+
+.reaction-layer { position: fixed; left: 0; right: 0; bottom: 0; height: 60vh; pointer-events: none; z-index: 350; overflow: hidden; }
+
+.reaction-bubble {
+    position: absolute;
+    bottom: 70px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    animation: floatUp 2.8s ease-out forwards;
+}
+
+.reaction-emoji { font-size: 2.6rem; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5)); }
+
+.reaction-who {
+    margin-top: 2px;
+    padding: 1px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    background: rgba(10, 10, 15, 0.8);
+    border: 1px solid rgba(201, 162, 39, 0.3);
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+.reaction-bubble.mine .reaction-who { border-color: var(--color-accent-gold); color: var(--color-accent-gold-light); }
+
+@keyframes floatUp {
+    0% { transform: translateY(20px) scale(0.6); opacity: 0; }
+    12% { transform: translateY(0) scale(1.15); opacity: 1; }
+    25% { transform: translateY(-20px) scale(1); }
+    100% { transform: translateY(-46vh) scale(0.9); opacity: 0; }
+}
+
+/* ---------- Número de ronda ---------- */
+.round-number {
+    display: inline-block;
+    margin-bottom: 0.6rem;
+    padding: 0.2rem 1rem;
+    font-family: var(--font-display);
+    font-size: 1.1rem;
+    letter-spacing: 0.3em;
+    color: var(--color-bg-primary);
+    background: linear-gradient(180deg, var(--color-accent-gold-light), var(--color-accent-gold-dark));
+    border-radius: 999px;
+    animation: tileIn 0.4s ease both;
+}
+
+/* ---------- Resumen de la partida (v2.4.0) ---------- */
+.game-summary:empty { display: none; }
+
+.game-summary {
+    margin-top: var(--space-lg);
+    padding: var(--space-md);
+    background: var(--color-bg-secondary);
+    border: 1px solid rgba(201, 162, 39, 0.15);
+    border-radius: var(--radius-lg);
+}
+
+.summary-title { font-size: 1.15rem; letter-spacing: 0.12em; color: var(--color-accent-gold); margin-bottom: var(--space-sm); }
+
+.summary-words { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; }
+
+.summary-word {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.7rem;
+    border-radius: 12px;
+    background: rgba(201, 162, 39, 0.08);
+    border: 1px solid rgba(201, 162, 39, 0.3);
+    text-align: center;
+}
+
+.summary-word span { font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-text-muted); }
+.summary-word strong { font-size: 1.3rem; color: var(--color-accent-gold-light); }
+.summary-word small { font-size: 0.75rem; color: var(--color-text-secondary); }
+.summary-word.fake { background: rgba(124, 58, 237, 0.1); border-color: rgba(124, 58, 237, 0.4); }
+.summary-word.fake strong { color: #c4b5fd; }
+
+.summary-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-top: 0.7rem; }
+.summary-label { font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-text-muted); margin-right: 0.2rem; }
+
+.summary-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0.6rem 0.15rem 0.2rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    color: var(--color-text-primary);
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.summary-chip.impostor { border-color: rgba(166, 51, 68, 0.55); }
+.summary-chip.charlatan { border-color: rgba(124, 58, 237, 0.55); }
+.chip-avatar { display: inline-flex; }
+
+.summary-timeline { margin-top: 0.8rem; display: flex; flex-direction: column; gap: 0.35rem; }
+
+.summary-timeline li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 0.88rem;
+    color: var(--color-text-secondary);
+}
+
+.tl-round {
+    flex-shrink: 0;
+    min-width: 32px;
+    text-align: center;
+    font-family: var(--font-display);
+    font-size: 1rem;
+    color: var(--color-bg-primary);
+    background: var(--color-accent-gold);
+    border-radius: 8px;
+}
+
+.summary-timeline .tl-tie .tl-round, .summary-timeline .tl-left .tl-round { background: var(--color-steel); color: var(--color-text-primary); }
+.tl-role { font-weight: 700; }
+.tl-role.impostor { color: #ff6b7d; }
+.tl-role.citizen { color: #7cb3ff; }
+.tl-role.charlatan { color: #c4b5fd; }
+.tl-votes { color: var(--color-text-muted); font-size: 0.8rem; }
+
+#gameover-wait { margin: var(--space-md) 0 0; animation: hintBlink 2.2s ease-in-out infinite; }
+
+/* ---------- Reducir animaciones (ajuste) ---------- */
+body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+}
+
+body.reduce-motion .confetti { display: none; }
+body.reduce-motion .reaction-bubble { animation: none !important; bottom: 90px; }
 
 /* ---------- Movimiento reducido ---------- */
 @media (prefers-reduced-motion: reduce) {

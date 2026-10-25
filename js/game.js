@@ -1,5 +1,9 @@
 /**
- * INFILTRA - Game Logic v2.3.0 (Definitive Edition)
+ * INFILTRA - Game Logic v2.4.0 (Definitive Edition)
+ *
+ * v2.4.0: ajustes (volúmenes, narrador, clics, vibración, animaciones),
+ * narrador por ronda, reacciones rápidas, resumen e historial al final,
+ * carta que se revela y se oculta, fin de partida sólido para todos.
  *
  * v2.3.0: sonido con archivos (assets/sounds, Web Audio, ambiente por
  * pantalla), ayuda en ventana que abre/cierra, carta con giro,
@@ -218,22 +222,58 @@ function trueRoleOf(id) {
     return (G.trueRoles && G.trueRoles[id]) || (G.fullRoles[id] && G.fullRoles[id].role) || '';
 }
 
-// ── Sonido (v2.3.0) ──────────────────────────────────────────────
+// ── Ajustes (v2.4.0) ─────────────────────────────────────────────
+// Preferencias de este dispositivo (localStorage). El botón de bocina
+// del encabezado sigue siendo el silencio general.
+const DEFAULT_SETTINGS = {
+    sfx: 0.8,          // volumen de efectos 0..1
+    ambient: 0.6,      // volumen del ambiente de fondo
+    voice: 0.9,        // volumen del narrador
+    narrator: true,    // narrador por ronda
+    clicks: true,      // sonido al tocar botones
+    vibration: true,   // vibración en el celular
+    reduceMotion: false
+};
+G.settings = Object.assign({}, DEFAULT_SETTINGS);
+G.history = [];          // rondas de la partida (state/history)
+G.reactionSeen = {};     // última reacción vista por jugador
+
+function loadSettings() {
+    try {
+        const raw = JSON.parse(localStorage.getItem('infiltra_settings') || '{}');
+        Object.keys(DEFAULT_SETTINGS).forEach(function(k) {
+            if (typeof raw[k] === typeof DEFAULT_SETTINGS[k]) G.settings[k] = raw[k];
+        });
+    } catch (e) {}
+}
+
+function saveSettings() {
+    try { localStorage.setItem('infiltra_settings', JSON.stringify(G.settings)); } catch (e) {}
+}
+
+function applySettings() {
+    if (sfxBus) sfxBus.gain.value = G.settings.sfx;
+    if (ambientBus) ambientBus.gain.value = G.settings.ambient;
+    if (voiceBus) voiceBus.gain.value = G.settings.voice;
+    document.body.classList.toggle('reduce-motion', !!G.settings.reduceMotion);
+    if (!G.settings.narrator) stopNarrator();
+}
+
+// ── Sonido (v2.4.0) ──────────────────────────────────────────────
 // Efectos y ambientes en assets/sounds/*.mp3 reproducidos con Web
-// Audio (mezcla, volumen y loops sin corte). Si un archivo no carga,
-// suena un tono sintetizado de respaldo. El contexto se crea en el
-// primer toque, como exigen los navegadores móviles; el silencio se
-// guarda en localStorage.
+// Audio por tres canales (efectos, ambiente y voz) con volumen propio.
+// Si un archivo no carga, suena un tono sintetizado de respaldo. El
+// contexto se crea en el primer toque, como exigen los móviles.
 const SOUND_FILES = {
     click: 'ui_click', whoosh: 'ui_whoosh', join: 'join', reveal: 'reveal',
     start: 'round_start', tick: 'tick', timeup: 'timeup', voting: 'voting',
     vote: 'vote', eliminated: 'eliminated', tie: 'tie', win: 'win', lose: 'lose',
     lobby: 'ambient_lobby', tension: 'ambient_tension'
 };
-const SOUND_VOLUME = { click: 0.35, tick: 0.6, whoosh: 0.5, join: 0.6 };
-const AMBIENT_VOLUME = 0.22;
+const SOUND_VOLUME = { click: 0.14, tick: 0.5, whoosh: 0.4, join: 0.55, vote: 0.7 };
+const AMBIENT_VOLUME = 0.36;
 const SYNTH_FALLBACK = {
-    click:      [[900, 0.03]],
+    click:      [[620, 0.025]],
     whoosh:     [[500, 0.08]],
     join:       [[988, 0.1], [1319, 0.15]],
     reveal:     [[523, 0.08], [784, 0.14]],
@@ -248,13 +288,14 @@ const SYNTH_FALLBACK = {
     lose:       [[392, 0.18], [330, 0.18], [262, 0.4]]
 };
 let audioCtx = null;
-let masterGain = null;
+let masterGain = null, sfxBus = null, ambientBus = null, voiceBus = null;
 const soundBuffers = {};
 let soundsRequested = false;
 const ambient = { wanted: null, name: null, src: null, gain: null };
 
 function unlockAudio() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
+    unlockSpeech();
     if (!Ctx) return;
     try {
         if (!audioCtx) {
@@ -262,6 +303,11 @@ function unlockAudio() {
             masterGain = audioCtx.createGain();
             masterGain.gain.value = G.soundEnabled ? 1 : 0;
             masterGain.connect(audioCtx.destination);
+            sfxBus = audioCtx.createGain();
+            ambientBus = audioCtx.createGain();
+            voiceBus = audioCtx.createGain();
+            [sfxBus, ambientBus, voiceBus].forEach(function(b) { b.connect(masterGain); });
+            applySettings();
             maybeShowSilentHint();
         }
         if (audioCtx.state === 'suspended') {
@@ -273,22 +319,28 @@ function unlockAudio() {
     } catch (e) { audioCtx = null; }
 }
 
+function decodeInto(store, key, url, onReady) {
+    fetch(url)
+        .then(function(r) { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+        .then(function(data) {
+            // Safari antiguo solo acepta la forma con callbacks
+            return new Promise(function(ok, fail) { audioCtx.decodeAudioData(data, ok, fail); });
+        })
+        .then(function(buf) { store[key] = buf; if (onReady) onReady(key); })
+        .catch(function() { /* queda el respaldo */ });
+}
+
 // Descarga y decodifica todos los sonidos una sola vez (≈0.9 MB)
 function loadSounds() {
     if (soundsRequested || !audioCtx || typeof fetch === 'undefined') return;
     soundsRequested = true;
     Object.keys(SOUND_FILES).forEach(function(name) {
-        fetch('assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.3.0')
-            .then(function(r) { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
-            .then(function(data) {
-                // Safari antiguo solo acepta la forma con callbacks
-                return new Promise(function(ok, fail) { audioCtx.decodeAudioData(data, ok, fail); });
-            })
-            .then(function(buf) {
-                soundBuffers[name] = buf;
-                if (name === ambient.wanted) applyAmbient();
-            })
-            .catch(function() { /* queda el tono de respaldo */ });
+        decodeInto(soundBuffers, name, 'assets/sounds/' + SOUND_FILES[name] + '.mp3?v=2.4.0', function(n) {
+            if (n === ambient.wanted) applyAmbient();
+        });
+    });
+    NARRATOR_FILES.forEach(function(key) {
+        decodeInto(voiceBuffers, key, 'assets/sounds/voice/' + key + '.mp3?v=2.4.0');
     });
 }
 
@@ -304,7 +356,7 @@ function playSound(name) {
             src.buffer = buf;
             gain.gain.value = SOUND_VOLUME[name] || 0.9;
             src.connect(gain);
-            gain.connect(masterGain);
+            gain.connect(sfxBus);
             src.start();
             return;
         }
@@ -315,16 +367,17 @@ function playSound(name) {
 function playSynth(name) {
     if (!SYNTH_FALLBACK[name]) return;
     let t = audioCtx.currentTime;
+    const peak = name === 'click' ? 0.05 : 0.18;
     SYNTH_FALLBACK[name].forEach(function(note) {
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'triangle';
         osc.frequency.value = note[0];
         gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(peak, t + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.0001, t + note[1]);
         osc.connect(gain);
-        gain.connect(masterGain);
+        gain.connect(sfxBus);
         osc.start(t);
         osc.stop(t + note[1] + 0.02);
         t += note[1] * 0.9;
@@ -360,9 +413,20 @@ function applyAmbient() {
         gain.gain.setValueAtTime(0, now);
         gain.gain.linearRampToValueAtTime(AMBIENT_VOLUME, now + 1.5);
         src.connect(gain);
-        gain.connect(masterGain);
+        gain.connect(ambientBus);
         src.start();
         ambient.src = src; ambient.gain = gain;
+    } catch (e) {}
+}
+
+// Mientras habla el narrador el ambiente baja a la mitad
+function duckAmbient(on) {
+    if (!ambientBus || !audioCtx) return;
+    try {
+        const now = audioCtx.currentTime;
+        ambientBus.gain.cancelScheduledValues(now);
+        ambientBus.gain.setValueAtTime(ambientBus.gain.value, now);
+        ambientBus.gain.linearRampToValueAtTime(G.settings.ambient * (on ? 0.4 : 1), now + 0.3);
     } catch (e) {}
 }
 
@@ -371,6 +435,108 @@ function ambientForScreen(id) {
     if (id === 'screen-gameover') return null;
     if (id === 'screen-home' || id === 'screen-config' || id === 'screen-lobby') return 'lobby';
     return 'tension';
+}
+
+// ── Narrador (v2.4.0) ────────────────────────────────────────────
+// Frases por momento de la partida. Si existe la grabación en
+// assets/sounds/voice/<clave>.mp3 (ElevenLabs) se usa; si no, la voz en
+// español del propio dispositivo. Las frases se encolan para no pisarse.
+const NARRATOR_LINES = {
+    narr_roles:         'Revisen su rol, en secreto.',
+    narr_round:         '¡Comienza la ronda!',
+    narr_timeup:        '¡Se acabó el tiempo!',
+    narr_voting:        '¡Hora de votar! ¿Quién es el infiltrado?',
+    narr_tie:           '¡Empate! Nadie abandona la partida, por ahora.',
+    narr_caught:        '¡Era un infiltrado!',
+    narr_innocent:      'Era inocente.',
+    narr_charlatan:     '¡Era el charlatán!',
+    narr_win_citizens:  '¡Los ciudadanos ganan!',
+    narr_win_impostors: 'Los infiltrados, ganan.'
+};
+// Grabaciones disponibles en assets/sounds/voice/ (se llena al subir
+// los archivos de ElevenLabs; vacío = voz del dispositivo)
+const NARRATOR_FILES = [];
+const voiceBuffers = {};
+const narratorQueue = [];
+let narratorBusy = false;
+let speechVoice = null;
+let speechUnlocked = false;
+
+function pickSpeechVoice() {
+    if (!('speechSynthesis' in window)) return null;
+    const voices = window.speechSynthesis.getVoices() || [];
+    const prefs = ['es-MX', 'es-US', 'es-419', 'es-ES'];
+    for (let i = 0; i < prefs.length; i++) {
+        const v = voices.find(function(x) { return x.lang && x.lang.replace('_', '-') === prefs[i]; });
+        if (v) return v;
+    }
+    return voices.find(function(x) { return x.lang && x.lang.toLowerCase().indexOf('es') === 0; }) || null;
+}
+
+// iOS solo deja hablar si la primera frase sale de un toque del usuario
+function unlockSpeech() {
+    if (speechUnlocked || !('speechSynthesis' in window)) return;
+    speechUnlocked = true;
+    try {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+        speechVoice = pickSpeechVoice();
+        if (!speechVoice && window.speechSynthesis.addEventListener) {
+            window.speechSynthesis.addEventListener('voiceschanged', function() { speechVoice = pickSpeechVoice(); });
+        }
+    } catch (e) {}
+}
+
+function narrate(key, delayMs) {
+    if (!NARRATOR_LINES[key] || !G.settings.narrator || !G.soundEnabled) return;
+    setTimeout(function() {
+        if (narratorQueue.indexOf(key) !== -1) return;
+        narratorQueue.push(key);
+        if (narratorQueue.length > 3) narratorQueue.splice(0, narratorQueue.length - 3);
+        nextNarration();
+    }, delayMs || 0);
+}
+
+function nextNarration() {
+    if (narratorBusy || narratorQueue.length === 0) return;
+    if (!G.settings.narrator || !G.soundEnabled) { narratorQueue.length = 0; return; }
+    const key = narratorQueue.shift();
+    const done = function() { narratorBusy = false; duckAmbient(false); nextNarration(); };
+    narratorBusy = true;
+    duckAmbient(true);
+    try {
+        const buf = voiceBuffers[key];
+        if (buf && audioCtx && audioCtx.state === 'running') {
+            const src = audioCtx.createBufferSource();
+            src.buffer = buf;
+            src.connect(voiceBus);
+            src.onended = done;
+            src.start();
+            return;
+        }
+        if ('speechSynthesis' in window) {
+            speechVoice = speechVoice || pickSpeechVoice();
+            if (!speechVoice) { done(); return; } // sin voz en español: mejor callar
+            const u = new SpeechSynthesisUtterance(NARRATOR_LINES[key]);
+            u.voice = speechVoice;
+            u.lang = speechVoice.lang;
+            u.rate = 0.98;
+            u.pitch = 0.85;
+            u.volume = Math.max(0, Math.min(1, G.settings.voice));
+            u.onend = done;
+            u.onerror = done;
+            window.speechSynthesis.speak(u);
+            setTimeout(function() { if (narratorBusy) done(); }, 6000); // red de seguridad
+            return;
+        }
+    } catch (e) {}
+    done();
+}
+
+function stopNarrator() {
+    narratorQueue.length = 0;
+    try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
 }
 
 // En iPhone/iPad el interruptor de silencio apaga el audio web: se avisa
@@ -387,6 +553,7 @@ function maybeShowSilentHint() {
 }
 
 function vibrate(pattern) {
+    if (!G.settings.vibration) return;
     try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
 }
 
@@ -473,6 +640,8 @@ function init() {
     injectDynamicStyles();
     setupRefreshProtection();
     try { G.soundEnabled = localStorage.getItem('infiltra_sound') !== 'off'; } catch (e) {}
+    loadSettings();
+    applySettings();
     updateSoundButton();
     // Ambiente de la pantalla inicial (suena tras el primer toque)
     setAmbient(ambientForScreen((document.querySelector('.screen.active') || {}).id || 'screen-home'));
@@ -492,6 +661,7 @@ function init() {
             initAvatars(); initFrames(); initCategories(); initParticles();
             bindEvents(); updateProfilePreview(); createPlayersSidebar();
             createSpectatorControls();
+    createReactionBars();
             initFirebase();
             return;
         } else { clearSession(); }
@@ -506,6 +676,7 @@ function init() {
     updateProfilePreview();
     createPlayersSidebar();
     createSpectatorControls();
+    createReactionBars();
 }
 
 function loadProfile() {
@@ -793,7 +964,7 @@ function bindEvents() {
     bind('btn-exit-game', exitGame);
     bind('btn-spectator-next', spectatorNextAction);
     bind('btn-spectator-lobby', backToLobby);
-    bind('role-card', revealRole);
+    bind('role-card', toggleRoleCard);
     bind('btn-leave-role', leaveRoom);
     bind('btn-leave-voting', leaveRoom);
     bind('btn-leave-results', leaveRoom);
@@ -810,26 +981,32 @@ function bindEvents() {
         G.soundEnabled = !G.soundEnabled;
         try { localStorage.setItem('infiltra_sound', G.soundEnabled ? 'on' : 'off'); } catch (e) {}
         if (masterGain) masterGain.gain.value = G.soundEnabled ? 1 : 0;
+        if (!G.soundEnabled) stopNarrator();
         updateSoundButton();
         unlockAudio();
         applyAmbient();
         playSound('click');
     });
-    // Ayuda: el mismo botón abre y cierra la ventana
-    bind('btn-help', function() { toggleHelp(); });
-    const helpModal = document.getElementById('help-modal');
-    if (helpModal) helpModal.querySelectorAll('[data-close]').forEach(function(el) {
-        el.addEventListener('click', function() { toggleHelp(false); });
+    // Ayuda y ajustes: el mismo botón abre y cierra su ventana
+    bind('btn-help', function() { toggleModal('help-modal'); });
+    bind('btn-settings', function() { toggleModal('settings-modal'); });
+    Object.keys(MODALS).forEach(function(id) {
+        const modal = document.getElementById(id);
+        if (modal) modal.querySelectorAll('[data-close]').forEach(function(el) {
+            el.addEventListener('click', function() { toggleModal(id, false); });
+        });
     });
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') toggleHelp(false);
+        if (e.key === 'Escape') closeModals();
     });
+    bindSettings();
     // Clic de interfaz en botones y selecciones (los que tienen sonido
     // propio, como votar o revelar, no lo duplican)
     document.addEventListener('click', function(e) {
         const el = e.target.closest && e.target.closest('button, .avatar-option, .frame-option-new, .category-item');
-        if (!el || el.disabled || el.id === 'btn-sound' || el.id === 'btn-help' || el.hasAttribute('data-close') ||
-            el.classList.contains('btn-vote')) return;
+        if (!el || el.disabled || !G.settings.clicks || el.id === 'btn-sound' || el.id === 'btn-help' ||
+            el.id === 'btn-settings' || el.hasAttribute('data-close') || el.classList.contains('btn-vote') ||
+            el.classList.contains('btn-reaction') || el.closest('#settings-modal')) return;
         unlockAudio();
         playSound('click');
     });
@@ -876,22 +1053,98 @@ function showScreen(id) {
     setAmbient(ambientForScreen(id));
 }
 
-// Ventana de ayuda (v2.3.0): se abre y cierra con el botón "?", la X,
-// el fondo o Esc, sin cambiar de pantalla ni perder la partida.
-function toggleHelp(force) {
-    const modal = document.getElementById('help-modal');
+// Ventanas (ayuda y ajustes): se abren y cierran con su botón del
+// encabezado, la X, el fondo o Esc, sin cambiar de pantalla ni perder
+// la partida. Abrir una cierra la otra.
+const MODALS = { 'help-modal': 'btn-help', 'settings-modal': 'btn-settings' };
+
+function toggleModal(id, force) {
+    const modal = document.getElementById(id);
     if (!modal) return;
     const open = typeof force === 'boolean' ? force : modal.hidden;
     if (open === !modal.hidden) return;
+    if (open) Object.keys(MODALS).forEach(function(other) { if (other !== id) toggleModal(other, false); });
     modal.hidden = !open;
-    document.body.classList.toggle('help-open', open);
-    const btn = document.getElementById('btn-help');
+    const anyOpen = Object.keys(MODALS).some(function(m) { const el = document.getElementById(m); return el && !el.hidden; });
+    document.body.classList.toggle('help-open', anyOpen);
+    const btn = document.getElementById(MODALS[id]);
     if (btn) {
         btn.classList.toggle('active', open);
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
+    if (open && id === 'settings-modal') renderSettings();
     unlockAudio();
     playSound('whoosh');
+}
+
+function toggleHelp(force) { toggleModal('help-modal', force); }
+
+function closeModals() { Object.keys(MODALS).forEach(function(id) { toggleModal(id, false); }); }
+
+// Refleja G.settings en los controles de la ventana de ajustes
+function renderSettings() {
+    const set = function(id, prop, val) { const el = document.getElementById(id); if (el) el[prop] = val; };
+    set('set-sfx', 'value', Math.round(G.settings.sfx * 100));
+    set('set-ambient', 'value', Math.round(G.settings.ambient * 100));
+    set('set-voice', 'value', Math.round(G.settings.voice * 100));
+    set('set-narrator', 'checked', G.settings.narrator);
+    set('set-clicks', 'checked', G.settings.clicks);
+    set('set-vibration', 'checked', G.settings.vibration);
+    set('set-motion', 'checked', G.settings.reduceMotion);
+    const voiceRow = document.getElementById('set-voice-row');
+    if (voiceRow) voiceRow.classList.toggle('disabled', !G.settings.narrator);
+    const note = document.getElementById('set-voice-note');
+    if (note) note.textContent = NARRATOR_FILES.length ? 'Voz grabada del narrador'
+        : (('speechSynthesis' in window) ? 'Usa la voz en español de tu dispositivo' : 'Tu navegador no tiene voz disponible');
+}
+
+function bindSettings() {
+    const onRange = function(id, key) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('input', function() {
+            G.settings[key] = Math.max(0, Math.min(1, (parseInt(el.value, 10) || 0) / 100));
+            applySettings();
+            saveSettings();
+        });
+        el.addEventListener('change', function() {
+            unlockAudio();
+            if (key === 'sfx') playSound('vote');
+            if (key === 'voice') narrate('narr_round');
+        });
+    };
+    const onToggle = function(id, key, after) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', function() {
+            G.settings[key] = !!el.checked;
+            applySettings();
+            saveSettings();
+            renderSettings();
+            if (after) after(el.checked);
+        });
+    };
+    onRange('set-sfx', 'sfx');
+    onRange('set-ambient', 'ambient');
+    onRange('set-voice', 'voice');
+    onToggle('set-narrator', 'narrator', function(on) { if (on) { unlockAudio(); narrate('narr_round'); } });
+    onToggle('set-clicks', 'clicks');
+    onToggle('set-vibration', 'vibration', function(on) { if (on) vibrate(60); });
+    onToggle('set-motion', 'reduceMotion');
+    const test = document.getElementById('set-test');
+    if (test) test.addEventListener('click', function() {
+        unlockAudio();
+        playSound('reveal');
+        narrate('narr_voting', 400);
+    });
+    const reset = document.getElementById('set-reset');
+    if (reset) reset.addEventListener('click', function() {
+        G.settings = Object.assign({}, DEFAULT_SETTINGS);
+        applySettings();
+        saveSettings();
+        renderSettings();
+        toast('Ajustes restablecidos', 'success');
+    });
 }
 
 function showConfig() {
@@ -1208,6 +1461,7 @@ function onStateChange(snapshot) {
         G.citizens      = arrayFromFirebase(state.citizens);
         G.fullRoles     = state.roles || {};
         G.starterPlayerId = state.starterPlayerId || null;
+        G.history       = arrayFromFirebase(state.history);
         // Todos guardan los roles verdaderos: un host heredado los
         // necesita para "Cambiar Palabra" (si no, el charlatán recibía
         // la palabra secreta) y los espectadores para ver al charlatán.
@@ -1345,6 +1599,7 @@ function onPlayersChange(snapshot) {
     const firstSnapshot = !G.playersLoaded;
     G.playersLoaded = true;
     let someoneJoined = false;
+    processReactions(playersData, firstSnapshot);
 
     // Sala llena (solo host): también con la partida en curso, para que
     // quien espera la siguiente no exceda el máximo. Se cuentan solo los
@@ -1601,7 +1856,7 @@ function restoreRoleScreen() {
         document.getElementById('role-icon').innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
         document.getElementById('role-title').textContent = G.myRole.role;
         document.getElementById('role-word').textContent = G.myRole.word;
-        document.getElementById('role-instruction').textContent = 'Tu rol (ya revelado)';
+        document.getElementById('role-instruction').textContent = 'Toca la carta para ocultarla';
         updateRoleWordImage();
     } else {
         if (card) card.className = 'role-card blurred';
@@ -1831,12 +2086,14 @@ function scheduleOfflineElimination(id) {
         // El host escribe la eliminación al estado autoritativo; si no,
         // el siguiente cambio de fase la borraría al re-sincronizar.
         if (G.isHost && G.db && G.channel) {
+            G.history = (G.history || []).concat([{ kind: 'left', r: roundNumber(), id: id, name: p.name || 'Jugador', role: trueRoleOf(id) }]);
             G.db.ref('rooms/' + G.channel + '/state').update({
                 activePlayers: G.activePlayers,
                 eliminated:    G.eliminated,
                 impostors:     G.impostors,
                 charlatans:    G.charlatans,
-                citizens:      G.citizens
+                citizens:      G.citizens,
+                history:       G.history
             }).catch(function(e) { console.error('Error registrando desconexión:', e); });
             // Con la ronda sin votación de por medio, la desconexión
             // puede decidir la partida (p. ej. se fue el último infiltrado)
@@ -1932,6 +2189,7 @@ function updateHostUI() {
     if (G.gamePhase === 'gameover') {
         const btnBackToLobby = document.getElementById('btn-back-to-lobby');
         if (btnBackToLobby) btnBackToLobby.style.display = G.isHost ? 'block' : 'none';
+        updateGameoverWait();
     }
     if (G.isSpectator) updateSpectatorHostControls();
     renderPlayerList();
@@ -2052,8 +2310,10 @@ function distributeRoles() {
         starterPlayerId: G.starterPlayerId,
         usedWords:     G.usedWords,
         isFirstRound:  true,
-        rolesVersion:  G.rolesVersion
+        rolesVersion:  G.rolesVersion,
+        history:       null
     });
+    G.history = [];
 }
 
 function skipWord() {
@@ -2147,6 +2407,7 @@ function handleAssign(msg) {
     if (starterInfo) starterInfo.style.display = 'none';
 
     if (G.isFirstRound) {
+        narrate('narr_roles', 600);
         if (card) card.className = 'role-card blurred';
         roleIcon.innerHTML = '<img src="' + ICONS.help + '" alt="?" class="role-icon-img">';
         roleTitle.textContent = 'SECRETO';
@@ -2160,7 +2421,7 @@ function handleAssign(msg) {
         roleIcon.innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
         roleTitle.textContent = G.myRole.role;
         roleWord.textContent  = G.myRole.word;
-        roleInst.textContent  = 'Tu rol (ya revelado)';
+        roleInst.textContent  = 'Toca la carta para ocultarla';
         updateRoleWordImage();
     }
 
@@ -2236,16 +2497,27 @@ function renderWordImage(box, url) {
     box.style.display = 'block';
 }
 
+// La carta se revela y se oculta con cada toque (para taparla si alguien
+// mira). G.roleRevealed indica si ya la viste alguna vez esta partida.
+function toggleRoleCard() {
+    const card = document.getElementById('role-card');
+    if (!card || !G.myRole) return;
+    if (card.classList.contains('blurred')) revealRole();
+    else hideRoleCard();
+}
+
 function revealRole() {
-    if (G.roleRevealed || !G.myRole) return;
+    if (!G.myRole) return;
+    const card = document.getElementById('role-card');
+    if (card && !card.classList.contains('blurred') && G.roleRevealed) return; // ya visible
+    const firstTime = !G.roleRevealed;
     G.roleRevealed = true;
     playSound('reveal');
-    const card = document.getElementById('role-card');
     if (card) card.classList.remove('blurred');
     document.getElementById('role-icon').innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
     document.getElementById('role-title').textContent = G.myRole.role;
     document.getElementById('role-word').textContent  = G.myRole.word;
-    document.getElementById('role-instruction').textContent = 'Memoriza tu información';
+    document.getElementById('role-instruction').textContent = 'Toca la carta para ocultarla';
     const roleClass = roleClassOf(G.myRole.role);
     if (card) {
         card.classList.add(roleClass);
@@ -2256,8 +2528,21 @@ function revealRole() {
     }
     vibrate(30);
     updateRoleWordImage();
-    showPointsReminder();
+    if (firstTime && G.gamePhase === 'roles') showPointsReminder();
     saveSession(); // conservar roleRevealed para restaurar tras F5
+}
+
+function hideRoleCard() {
+    const card = document.getElementById('role-card');
+    if (!card) return;
+    card.className = 'role-card blurred';
+    document.getElementById('role-icon').innerHTML = '<img src="' + ICONS.help + '" alt="?" class="role-icon-img">';
+    document.getElementById('role-title').textContent = 'SECRETO';
+    document.getElementById('role-word').textContent = '???';
+    document.getElementById('role-instruction').textContent = 'Toca la carta para ver tu rol';
+    hideRoleWordImage();
+    playSound('whoosh');
+    vibrate(15);
 }
 
 function showPointsReminder() {
@@ -2308,7 +2593,7 @@ function showRoundStartOverlay(starterName, starterAvatar, starterFrame) {
     const overlay = document.createElement('div');
     overlay.id = 'round-start-overlay';
     overlay.className = 'round-start-overlay';
-    overlay.innerHTML = '<div class="round-start-message"><h2>¡COMIENZA LA RONDA!</h2>' +
+    overlay.innerHTML = '<div class="round-start-message"><div class="round-number">RONDA ' + roundNumber() + '</div><h2>¡COMIENZA LA RONDA!</h2>' +
         '<div class="round-start-avatar hex-avatar-container" style="width:100px;height:115px;--frame-color:' + frameColor + '">' +
         '<img src="' + avatar.image + '" alt="avatar" class="hex-avatar-img">' +
         (hasFrame ? '<div class="hex-avatar-frame"></div>' : '') +
@@ -2349,8 +2634,9 @@ function handleStartRound(msg) {
     if (btnSkip)  btnSkip.style.display = 'none';
 
     const starterName = G.players[G.starterPlayerId]?.name || 'Alguien';
-    toggleHelp(false);
+    closeModals();
     playSound('start');
+    narrate('narr_round', 450);
     vibrate(80);
 
     if (G.isSpectator) {
@@ -2400,6 +2686,7 @@ function startTimer() {
             timer.textContent = '¡TIEMPO!';
             timer.classList.add('done');
             playSound('timeup');
+            narrate('narr_timeup', 200);
             vibrate([500, 200, 500]);
             hostOpenVoting();
             // Los no-host esperan el cambio de fase vía onStateChange
@@ -2465,8 +2752,9 @@ function updateTimerDisplay(seconds) {
 function startVoting() {
     if (G.timerInterval) clearInterval(G.timerInterval);
     hideStarterBanner();
-    toggleHelp(false);
+    closeModals();
     playSound('voting');
+    narrate('narr_voting', 300);
     vibrate(60);
     if (G.isSpectator) {
         const specStatus = document.getElementById('spectator-status');
@@ -2668,6 +2956,16 @@ function finalizeResults() {
         G.scores[id] = (G.scores[id] || 0) + POINTS.IMPOSTOR_SURVIVE_ROUND;
     });
 
+    // Historial de la partida (se muestra al final)
+    G.history = (G.history || []).concat([{
+        kind:  isTie ? 'tie' : 'vote',
+        r:     roundNumber(),
+        id:    eliminatedId,
+        name:  eliminatedId ? (G.players[eliminatedId]?.name || 'Jugador') : null,
+        role:  eliminatedRole,
+        votes: maxVotes
+    }]);
+
     const resultsPayload = {
         votes:         G.votes,
         eliminatedId:  eliminatedId,
@@ -2690,7 +2988,8 @@ function finalizeResults() {
         citizens:      G.citizens,
         scores:        G.scores,
         roles:         G.fullRoles,
-        results:       resultsPayload
+        results:       resultsPayload,
+        history:       G.history
     }).catch(function(e) { console.error('Error publicando resultados:', e); });
 
     // Solo si seguimos en resultados: si el host ya volvió a la sala,
@@ -2749,6 +3048,8 @@ function showResults(msg) {
     updatePlayersSidebar();
     updateRolePlayersList();
     playSound(msg.eliminatedId === G.myId ? 'lose' : msg.isTie ? 'tie' : 'eliminated');
+    narrate(msg.isTie ? 'narr_tie' : msg.eliminatedRole === 'INFILTRADO' ? 'narr_caught'
+        : msg.eliminatedRole === 'CHARLATÁN' ? 'narr_charlatan' : 'narr_innocent', 900);
 
     if (msg.eliminatedId === G.myId) {
         G.isSpectator = true;
@@ -2756,6 +3057,9 @@ function showResults(msg) {
         showYouEliminatedOverlay(msg.eliminatedRole);
         setTimeout(function() {
             hideYouEliminatedOverlay();
+            // Si la partida ya terminó (el host pulsó antes), no se tapa
+            // la pantalla final con la de espectador
+            if (G.gamePhase !== 'results') return;
             showScreen('screen-spectator');
             document.getElementById('spectator-status').textContent = 'Eliminado (' + msg.eliminatedRole + ')';
             updateSpectatorRoles();
@@ -2883,7 +3187,7 @@ function handleNextRound(msg) {
     document.getElementById('role-icon').innerHTML = '<img src="' + roleIconOf(G.myRole.role) + '" alt="" class="role-icon-img">';
     document.getElementById('role-title').textContent = G.myRole.role;
     document.getElementById('role-word').textContent  = G.myRole.word;
-    document.getElementById('role-instruction').textContent = 'Tu rol (conocido)';
+    document.getElementById('role-instruction').textContent = 'Toca la carta para ocultarla';
     updateRoleWordImage();
     document.getElementById('points-box').style.display = 'none';
     const timer = document.getElementById('timer');
@@ -2904,6 +3208,11 @@ function handleNextRound(msg) {
 }
 
 // ── Game Over ────────────────────────────────────────────────────
+
+// Número de la ronda en curso: votaciones (o empates) ya hechas + 1
+function roundNumber() {
+    return (G.history || []).filter(function(h) { return h && h.kind !== 'left'; }).length + 1;
+}
 
 // Condición de victoria sin efectos: ciudadanos si no quedan
 // infiltrados; infiltrados si igualan o superan al resto.
@@ -2944,6 +3253,9 @@ function handleGameOver(msg) {
     clearAllTimers();
     hideStarterBanner();
     hidePlayersSidebar();
+    hideRoundStartOverlay();
+    hideCountingVotesOverlay();
+    hideYouEliminatedOverlay();
     G.gamePhase = 'gameover';
     G.scores    = msg.scores || G.scores;
     G.fullRoles = msg.roles  || G.fullRoles;
@@ -2958,6 +3270,9 @@ function handleGameOver(msg) {
     const iAmImpostor = trueRoleOf(G.myId) === 'INFILTRADO';
     const iWon = (msg.winner === 'INFILTRADOS') === iAmImpostor;
     playSound(iWon ? 'win' : 'lose');
+    narrate(msg.winner === 'INFILTRADOS' ? 'narr_win_impostors' : 'narr_win_citizens', 800);
+    updateGameoverWait();
+    renderGameSummary();
     const card = document.querySelector('#screen-gameover .game-card');
     if (card) {
         card.classList.toggle('winner-impostors', msg.winner === 'INFILTRADOS');
@@ -3054,6 +3369,7 @@ function resetGameState() {
     G.resultsPublished = false;
     G.gameOverPublished = false;
     G.waitingNextGame = false;
+    G.history = [];
     setLobbyNotice('');
     G.hasVotedThisRound = false;
     G.roundEndTime   = null;
@@ -3157,10 +3473,135 @@ function updateSpectatorVotes() {
     }).join('');
 }
 
+// ── Fin de partida (v2.4.0) ──────────────────────────────────────
+// Quien no es host ve que se espera al host (antes solo veía "Salir").
+function updateGameoverWait() {
+    const el = document.getElementById('gameover-wait');
+    if (!el) return;
+    el.style.display = G.isHost ? 'none' : 'block';
+    el.textContent = 'Esperando a que ' + (G.players[G.hostId]?.name || 'el host') + ' vuelva a la sala…';
+}
+
+// Resumen: palabra secreta, palabra del charlatán, quiénes eran los
+// infiltrados y lo que pasó en cada ronda.
+function renderGameSummary() {
+    const box = document.getElementById('game-summary');
+    if (!box) return;
+    const ids = Object.keys(G.fullRoles || {});
+    let secret = null, fake = null, category = null;
+    const byRole = { INFILTRADO: [], 'CHARLATÁN': [] };
+    ids.forEach(function(id) {
+        const tr = trueRoleOf(id), r = G.fullRoles[id] || {};
+        if (tr === 'CIUDADANO' && !secret) { secret = r.word; category = r.cat; }
+        if (tr === 'CHARLATÁN') { fake = fake || r.word; category = category || r.cat; }
+        if (byRole[tr]) byRole[tr].push(id);
+    });
+    const nameOf = function(id, fallback) { return esc(G.players[id]?.name || fallback || 'Jugador'); };
+    const chips = function(list, cls) {
+        return list.map(function(id) {
+            return '<span class="summary-chip ' + cls + '"><span class="chip-avatar">' + renderHexAvatar(id, 22) + '</span>' + nameOf(id) + '</span>';
+        }).join('');
+    };
+    const roleLabel = function(role) {
+        return role ? '<b class="tl-role ' + roleClassOf(role) + '">' + esc(role) + '</b>' : '';
+    };
+    const timeline = (G.history || []).filter(Boolean).map(function(h) {
+        const who = h.id ? nameOf(h.id, h.name) : '';
+        let text;
+        if (h.kind === 'tie') text = 'Empate: nadie salió';
+        else if (h.kind === 'left') text = who + ' se desconectó · ' + roleLabel(h.role);
+        else text = who + ' fue expulsado · ' + roleLabel(h.role) + (h.votes ? ' <span class="tl-votes">(' + (Number(h.votes) || 0) + ' votos)</span>' : '');
+        return '<li class="tl-' + esc(h.kind) + '"><span class="tl-round">R' + (Number(h.r) || '?') + '</span><span>' + text + '</span></li>';
+    }).join('');
+    box.innerHTML =
+        '<h3 class="summary-title">Resumen de la partida</h3>' +
+        '<div class="summary-words">' +
+            (secret ? '<div class="summary-word"><span>Palabra secreta</span><strong>' + esc(secret) + '</strong>' +
+                (category ? '<small>' + esc(category) + '</small>' : '') + '</div>' : '') +
+            (fake ? '<div class="summary-word fake"><span>Palabra del charlatán</span><strong>' + esc(fake) + '</strong></div>' : '') +
+        '</div>' +
+        (byRole.INFILTRADO.length ? '<div class="summary-row"><span class="summary-label">Infiltrados</span>' + chips(byRole.INFILTRADO, 'impostor') + '</div>' : '') +
+        (byRole['CHARLATÁN'].length ? '<div class="summary-row"><span class="summary-label">Charlatán</span>' + chips(byRole['CHARLATÁN'], 'charlatan') + '</div>' : '') +
+        '<ol class="summary-timeline">' + (timeline || '<li class="tl-empty"><span>Sin votaciones</span></li>') + '</ol>';
+}
+
+// ── Reacciones rápidas (v2.4.0) ──────────────────────────────────
+// Emojis durante la votación, los resultados, como espectador y al
+// final. Cada jugador escribe la suya en players/{id}/reaction (nodo que
+// ya escucha todo el mundo); solo se muestran emojis de esta lista.
+const REACTIONS = ['😂', '😱', '🤔', '🤫', '👀', '😡', '👏'];
+let lastReactionSent = 0;
+
+function createReactionBars() {
+    ['screen-voting', 'screen-results', 'screen-spectator', 'screen-gameover'].forEach(function(id) {
+        const card = document.querySelector('#' + id + ' .game-card');
+        if (!card || card.querySelector('.reaction-bar')) return;
+        const bar = document.createElement('div');
+        bar.className = 'reaction-bar';
+        bar.setAttribute('role', 'group');
+        bar.setAttribute('aria-label', 'Reacciones');
+        bar.innerHTML = REACTIONS.map(function(e) {
+            return '<button type="button" class="btn-reaction" data-e="' + e + '" aria-label="Reaccionar ' + e + '">' + e + '</button>';
+        }).join('');
+        const group = card.querySelector('.btn-group');
+        card.insertBefore(bar, group || null);
+    });
+    if (!document.getElementById('reaction-layer')) {
+        const layer = document.createElement('div');
+        layer.id = 'reaction-layer';
+        layer.className = 'reaction-layer';
+        document.body.appendChild(layer);
+    }
+    if (!createReactionBars.bound) {
+        createReactionBars.bound = true;
+        document.addEventListener('click', function(ev) {
+            const b = ev.target.closest && ev.target.closest('.btn-reaction');
+            if (b) sendReaction(b.dataset.e);
+        });
+    }
+}
+
+function sendReaction(e) {
+    if (REACTIONS.indexOf(e) === -1 || !G.db || !G.channel) return;
+    const now = Date.now();
+    if (now - lastReactionSent < 1200) return; // sin spam
+    lastReactionSent = now;
+    showReaction(G.myId, e);
+    vibrate(10);
+    G.db.ref('rooms/' + G.channel + '/players/' + G.myId + '/reaction')
+        .set({ e: e, t: firebase.database.ServerValue.TIMESTAMP })
+        .catch(function() {});
+}
+
+function processReactions(playersData, firstSnapshot) {
+    Object.keys(playersData).forEach(function(id) {
+        const r = playersData[id] && playersData[id].reaction;
+        if (!r || typeof r.t !== 'number') return;
+        const prev = G.reactionSeen[id];
+        G.reactionSeen[id] = r.t;
+        if (firstSnapshot || id === G.myId || r.t <= (prev || 0)) return;
+        if (serverNow() - r.t > 8000) return; // reacción vieja (p. ej. al reconectar)
+        showReaction(id, r.e);
+    });
+}
+
+function showReaction(id, e) {
+    if (REACTIONS.indexOf(e) === -1) return;
+    const layer = document.getElementById('reaction-layer');
+    if (!layer) return;
+    const bubble = document.createElement('div');
+    bubble.className = 'reaction-bubble' + (id === G.myId ? ' mine' : '');
+    bubble.style.left = (8 + Math.random() * 74) + '%';
+    bubble.innerHTML = '<span class="reaction-emoji">' + e + '</span><span class="reaction-who">' + esc(id === G.myId ? 'Tú' : (G.players[id]?.name || 'Jugador')) + '</span>';
+    layer.appendChild(bubble);
+    while (layer.children.length > 12) layer.removeChild(layer.firstChild);
+    setTimeout(function() { bubble.remove(); }, 2800);
+}
+
 // ── Confeti (v2.3.0) ─────────────────────────────────────────────
 // Piezas con CSS (sin librerías); se limpian solas.
 function launchConfetti(colors) {
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (G.settings.reduceMotion || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
     const old = document.getElementById('confetti');
     if (old) old.remove();
     const box = document.createElement('div');

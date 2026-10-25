@@ -29,6 +29,10 @@ jugador en espera que no hereda el host a mitad de partida.
 v2.3.0 agrega: ayuda que abre y cierra con el mismo botón (también
 con Esc y el fondo) y voto propio marcado con progreso de votos.
 
+v2.4.0 agrega: carta que se revela y se oculta, fin de partida para
+espectadores y todos (resumen, espera, carrera con el expulsado, nueva
+partida, host que se va en el final), reacciones y ajustes.
+
 Nota: el mock no sustituye una partida real contra el Firebase de
 producción (latencia, reglas de seguridad); esa verificación se hace
 en el GitHub Pages de test antes de promocionar.

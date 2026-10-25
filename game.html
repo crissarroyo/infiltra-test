@@ -20,9 +20,9 @@
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-    <link rel="stylesheet" href="css/game-styles.css?v=2.3.0">
-    <link rel="stylesheet" href="css/hex-avatars.css?v=2.3.0">
-    <link rel="stylesheet" href="css/game-fx.css?v=2.3.0">
+    <link rel="stylesheet" href="css/game-styles.css?v=2.4.0">
+    <link rel="stylesheet" href="css/hex-avatars.css?v=2.4.0">
+    <link rel="stylesheet" href="css/game-fx.css?v=2.4.0">
 </head>
 <body class="game-page">
     <div class="particles-bg" id="particles"></div>
@@ -36,6 +36,9 @@
         <div class="header-controls">
             <button class="btn-icon" id="btn-sound" title="Sonido">
                 <img src="assets/icons/icon-sound-on.png" alt="Sonido" class="btn-icon-img">
+            </button>
+            <button class="btn-icon" id="btn-settings" title="Ajustes" aria-controls="settings-modal" aria-expanded="false">
+                <img src="assets/icons/icon-settings.png" alt="Ajustes" class="btn-icon-img">
             </button>
             <button class="btn-icon" id="btn-help" title="Ayuda" aria-controls="help-modal" aria-expanded="false">
                 <img src="assets/icons/icon-help.png" alt="Ayuda" class="btn-icon-img">
@@ -295,6 +298,8 @@
                         </div>
                         <div id="final-scores"></div>
                     </div>
+                    <div class="game-summary" id="game-summary"></div>
+                    <p class="status-text" id="gameover-wait" style="display:none"></p>
                     <div class="btn-group">
                         <button class="btn btn-primary" id="btn-back-to-lobby">
                             Volver a Sala
@@ -385,8 +390,59 @@
             </div>
         </div>
     </div>
+    <!-- Ajustes (v2.4.0): preferencias de este dispositivo -->
+    <div class="help-modal settings-modal" id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+        <div class="help-backdrop" data-close></div>
+        <div class="help-sheet">
+            <div class="help-head">
+                <h2 id="settings-title">AJUSTES</h2>
+                <button class="help-close" type="button" data-close aria-label="Cerrar ajustes">&times;</button>
+            </div>
+            <div class="help-body">
+                <h3 class="help-section-title">Sonido</h3>
+                <div class="setting-row">
+                    <label for="set-sfx">Efectos</label>
+                    <input type="range" id="set-sfx" min="0" max="100" step="5">
+                </div>
+                <div class="setting-row">
+                    <label for="set-ambient">Ambiente de fondo</label>
+                    <input type="range" id="set-ambient" min="0" max="100" step="5">
+                </div>
+                <div class="setting-row toggle">
+                    <label for="set-clicks">Sonido al tocar botones</label>
+                    <input type="checkbox" id="set-clicks" class="switch">
+                </div>
+
+                <h3 class="help-section-title">Narrador</h3>
+                <div class="setting-row toggle">
+                    <label for="set-narrator">Narrador por ronda<small id="set-voice-note"></small></label>
+                    <input type="checkbox" id="set-narrator" class="switch">
+                </div>
+                <div class="setting-row" id="set-voice-row">
+                    <label for="set-voice">Volumen de la voz</label>
+                    <input type="range" id="set-voice" min="0" max="100" step="5">
+                </div>
+
+                <h3 class="help-section-title">Pantalla y celular</h3>
+                <div class="setting-row toggle">
+                    <label for="set-vibration">Vibración</label>
+                    <input type="checkbox" id="set-vibration" class="switch">
+                </div>
+                <div class="setting-row toggle">
+                    <label for="set-motion">Reducir animaciones</label>
+                    <input type="checkbox" id="set-motion" class="switch">
+                </div>
+
+                <div class="settings-actions">
+                    <button type="button" class="btn btn-secondary" id="set-test">Probar sonido</button>
+                    <button type="button" class="btn btn-secondary" id="set-reset">Restablecer</button>
+                </div>
+                <p class="settings-note">El botón de la bocina, arriba, silencia todo el juego.</p>
+            </div>
+        </div>
+    </div>
     <div class="toast-container" id="toast-container"></div>
-    <script src="js/word-images.js?v=2.3.0"></script>
-    <script src="js/game.js?v=2.3.0"></script>
+    <script src="js/word-images.js?v=2.4.0"></script>
+    <script src="js/game.js?v=2.4.0"></script>
 </body>
 </html>
